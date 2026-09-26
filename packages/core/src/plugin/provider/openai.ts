@@ -266,8 +266,10 @@ export const OpenAIPlugin = define({
         originator: "opencode",
         ...(typeof account === "string" ? { "chatgpt-account-id": account } : {}),
       })
-      const luna = item.models.get(Model.ID.make("gpt-6-luna"))
-      const longLimit = luna?.enabled ? { ...luna.limit } : undefined
+      const longLuna = ["gpt-6-luna", "gpt-6-luna-fast"].flatMap((id) => {
+        const model = item.models.get(Model.ID.make(id))
+        return model?.enabled ? [{ model, limit: { ...model.limit } }] : []
+      })
       for (const model of item.models.values()) {
         // ChatGPT-plan tokens only authorize codex-eligible models, and the
         // subscription covers usage, so hide the rest and zero the cost.
@@ -293,12 +295,12 @@ export const OpenAIPlugin = define({
           draft.limit = { ...draft.limit, context: 400_000, input: 272_000 }
         })
       }
-      if (luna?.enabled && longLimit) {
-        evt.model.update(item.provider.id, Model.ID.make("gpt-6-luna-1m"), (draft) => {
-          Object.assign(draft, structuredClone(luna))
-          draft.modelID = luna.modelID ?? luna.id
-          draft.name = "GPT-6 Luna (1M)"
-          draft.limit = longLimit
+      for (const entry of longLuna) {
+        evt.model.update(item.provider.id, Model.ID.make(`${entry.model.id}-1m`), (draft) => {
+          Object.assign(draft, structuredClone(entry.model))
+          draft.modelID = entry.model.modelID ?? entry.model.id
+          draft.name = `${entry.model.name} (1M)`
+          draft.limit = entry.limit
         })
       }
     })
