@@ -6,6 +6,7 @@ import { App } from "../../app.js"
 import { Credential } from "../../credential.js"
 import { Bus } from "../../bus.js"
 import { Integration } from "../../integration.js"
+import { Model } from "../../model.js"
 import { OauthCallbackPage } from "../../oauth/page.js"
 import { Provider } from "../../provider.js"
 import type { PluginInternal } from "../internal.js"
@@ -265,6 +266,8 @@ export const OpenAIPlugin = define({
         originator: "opencode",
         ...(typeof account === "string" ? { "chatgpt-account-id": account } : {}),
       })
+      const luna = item.models.get(Model.ID.make("gpt-6-luna"))
+      const longLimit = luna?.enabled ? { ...luna.limit } : undefined
       for (const model of item.models.values()) {
         // ChatGPT-plan tokens only authorize codex-eligible models, and the
         // subscription covers usage, so hide the rest and zero the cost.
@@ -274,10 +277,13 @@ export const OpenAIPlugin = define({
             return
           }
           const apiID = draft.modelID ?? draft.id
-          const match = apiID.match(/^gpt-(\d+\.\d+)/)
+          const match = apiID.match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/)
+          const tooOld =
+            match &&
+            (Number(match[1]) < 5 || (Number(match[1]) === 5 && Number(match[2] ?? 0) <= 4))
           if (
             !codexAllowed.has(apiID) &&
-            (codexDisallowed.has(apiID) || !match || Number.parseFloat(match[1]) <= 5.4)
+            (codexDisallowed.has(apiID) || !match || tooOld)
           ) {
             draft.enabled = false
             return
@@ -285,6 +291,14 @@ export const OpenAIPlugin = define({
           draft.cost = []
           // Match Codex CLI so context consumption and subscription usage stay consistent between clients.
           draft.limit = { ...draft.limit, context: 400_000, input: 272_000 }
+        })
+      }
+      if (luna?.enabled && longLimit) {
+        evt.model.update(item.provider.id, Model.ID.make("gpt-6-luna-1m"), (draft) => {
+          Object.assign(draft, structuredClone(luna))
+          draft.modelID = luna.modelID ?? luna.id
+          draft.name = "GPT-6 Luna (1M)"
+          draft.limit = longLimit
         })
       }
     })

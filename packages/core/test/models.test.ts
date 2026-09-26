@@ -284,6 +284,8 @@ describe("ModelsDev Service", () => {
       expect(result.length).toBeGreaterThan(0)
       const anthropic = result.find((snapshot) => snapshot.info.id === "anthropic")
       expect(anthropic?.environment).toContain("ANTHROPIC_API_KEY")
+      const openai = result.find((snapshot) => snapshot.info.id === "openai")
+      expect(openai?.models.some((model) => model.id === "gpt-6-sol")).toBe(true)
       const final = yield* Ref.get(state)
       expect(final.calls).toEqual([])
     }),

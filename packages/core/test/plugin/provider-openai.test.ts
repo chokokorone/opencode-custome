@@ -114,6 +114,10 @@ describe("OpenAIPlugin", () => {
         catalog.model.update(Provider.ID.openai, Model.ID.make("gpt-5.6-sol"), (model) => {
           model.limit = { context: 1_050_000, input: 922_000, output: 128_000 }
         })
+        catalog.model.update(Provider.ID.openai, Model.ID.make("gpt-6-sol"), () => {})
+        catalog.model.update(Provider.ID.openai, Model.ID.make("gpt-6-luna"), (model) => {
+          model.limit = { context: 1_050_000, input: 922_000, output: 128_000 }
+        })
         catalog.model.update(Provider.ID.openai, Model.ID.make("gpt-4.1"), () => {})
       })
       yield* credentials.create({
@@ -160,6 +164,14 @@ describe("OpenAIPlugin", () => {
       const gpt56 = required(yield* catalog.model.get(Provider.ID.openai, Model.ID.make("gpt-5.6-sol")))
       expect(gpt56.enabled).toBe(true)
       expect(gpt56.limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+      expect(required(yield* catalog.model.get(Provider.ID.openai, Model.ID.make("gpt-6-sol"))).enabled).toBe(true)
+      const luna = required(yield* catalog.model.get(Provider.ID.openai, Model.ID.make("gpt-6-luna")))
+      const longLuna = required(yield* catalog.model.get(Provider.ID.openai, Model.ID.make("gpt-6-luna-1m")))
+      expect(luna.limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+      expect(longLuna.name).toBe("GPT-6 Luna (1M)")
+      expect(longLuna.modelID).toBe(Model.ID.make("gpt-6-luna"))
+      expect(longLuna.limit).toEqual({ context: 1_050_000, input: 922_000, output: 128_000 })
+      expect(longLuna.enabled).toBe(true)
       expect(required(yield* catalog.model.get(Provider.ID.openai, Model.ID.make("gpt-4.1"))).enabled).toBe(false)
     }),
   )
