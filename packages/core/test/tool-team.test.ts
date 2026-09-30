@@ -297,6 +297,21 @@ describe("TeamTool rejection events", () => {
             Stream.runCollect,
             Effect.forkScoped({ startImmediately: true }),
           )
+          const sent = yield* bus.subscribe(SessionEvent.TeamMessageSent).pipe(
+            Stream.filter((event) => event.data.teamID === "survey"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const ok = yield* executeTool(registry, {
+            sessionID: leader.id,
+            ...toolIdentity,
+            call: { type: "tool-call" as const, id: "call-sent-event", name: "message_to_peer", input: { to: "survey-2", text: "go" } },
+          })
+          expect(ok.status).toBe("completed")
+          const sentEvents = Array.from(yield* Fiber.join(sent))
+          expect(sentEvents).toHaveLength(1)
+          expect(sentEvents[0]?.data).toMatchObject({ teamID: "survey", to: "survey-2" })
           const denied = yield* executeTool(registry, {
             sessionID: member.id,
             ...toolIdentity,

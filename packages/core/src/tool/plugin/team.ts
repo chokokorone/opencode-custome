@@ -129,13 +129,13 @@ export const Plugin = {
           const verdict = TeamPolicy.decide(sender.kind, { kind: "peer", name: to, role: found.entry.role }, yield* rulesFor(found.teamID))
           if (!verdict.allowed)
             return yield* reject(sender, found.teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
-          return found.entry.sessionID
+          return { target: found.entry.sessionID, teamID: found.teamID }
         }
         const teamID = sender.membership.teamID
         if (to === "Boss") {
           const verdict = TeamPolicy.decide(sender.kind, { kind: "boss" }, yield* rulesFor(teamID))
           if (!verdict.allowed) return yield* reject(sender, teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
-          if (sender.kind === "leader") return sender.membership.parentID
+          if (sender.kind === "leader") return { target: sender.membership.parentID, teamID }
           return undefined
         }
         const entries = yield* team.roster(sender.membership)
@@ -147,7 +147,7 @@ export const Plugin = {
           yield* rulesFor(teamID),
         )
         if (!verdict.allowed) return yield* reject(sender, teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
-        return entry.sessionID
+        return { target: entry.sessionID, teamID }
       })
 
     const peerSenderLabel = (sender: Sender) =>
@@ -173,12 +173,12 @@ export const Plugin = {
                 return yield* new ToolFailure({
                   message: "message_to_peer is only available to members of a team or a session that spawned a team.",
                 })
-              const target = yield* resolveRecipient(sender, input.to)
-              if (target === undefined) return yield* rosterError(input.to, sender)
+              const resolved = yield* resolveRecipient(sender, input.to)
+              if (resolved === undefined) return yield* rosterError(input.to, sender)
               const text = [peerSenderLabel(sender), input.text].join("\n")
               yield* sessions
                 .prompt({
-                  sessionID: target,
+                  sessionID: resolved.target,
                   text,
                   metadata: { source: "message_to_peer", from: input.to },
                 })
@@ -187,10 +187,16 @@ export const Plugin = {
                     (error) => new ToolFailure({ message: `Failed to deliver message to ${input.to}`, error }),
                   ),
                 )
+              yield* bus.publish(SessionEvent.TeamMessageSent, {
+                sessionID: sender.kind === "boss" ? sender.sessionID : sender.membership.sessionID,
+                teamID: resolved.teamID,
+                from: senderLabel(sender),
+                to: input.to,
+              })
               return {
                 output: { output: `Message sent to ${input.to}.` },
                 content: `Message sent to ${input.to}.`,
-                metadata: { to: input.to, sessionID: target },
+                metadata: { to: input.to, sessionID: resolved.target },
               }
             }),
         })
