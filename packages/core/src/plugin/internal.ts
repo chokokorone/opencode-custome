@@ -75,6 +75,7 @@ import { SubagentTool } from "../tool/plugin/subagent.js"
 import { TeamTool } from "../tool/plugin/team.js"
 import { LogTool } from "../tool/plugin/log.js"
 import { ToolWaitTool } from "../tool/plugin/wait.js"
+import { ResultReadTool } from "../tool/plugin/result-read.js"
 // HARNESS: log tools need durable storage (see docs/design-log.md)
 import { Database } from "../database/database.js"
 import { SessionTeam } from "../session/team.js"
@@ -229,6 +230,7 @@ const pre = [
   TeamTool.Plugin,
   LogTool.Plugin,
   ToolWaitTool.Plugin,
+  ResultReadTool.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,
