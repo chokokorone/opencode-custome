@@ -6,6 +6,7 @@ import { FileDiff } from "@opencode-ai/schema/file-diff"
 import { Effect, Result, Schema } from "effect"
 import { Bom } from "@opencode-ai/util/bom"
 import { Environment } from "../../environment/index.js"
+import { WriteSerialization } from "../write-serialization.js"
 import { Formatter } from "../../formatter.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Location } from "../../location.js"
@@ -98,7 +99,9 @@ export const Plugin = {
                 message: `${operation}: ${errorMessage(error)}${completed ? `. Completed before failure: ${completed}` : ""}`,
               })
             }
-            return Effect.gen(function* () {
+            return WriteSerialization.serialized(
+              context.sessionID,
+              Effect.gen(function* () {
               const source = {
                 type: "tool" as const,
                 messageID: context.messageID,
@@ -282,7 +285,8 @@ export const Plugin = {
                 return patchFile(change, formatted.get(target.absolute))
               })
               return { applied, files }
-            }).pipe(
+              })
+            ).pipe(
               fileMutation.withLock(lockTargets),
               Effect.map((output) => ({
                 output,

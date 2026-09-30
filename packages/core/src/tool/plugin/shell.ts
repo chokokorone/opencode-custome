@@ -12,6 +12,7 @@ import { LocationMutation } from "../../location-mutation.js"
 import { Permission } from "../../permission.js"
 import { NonNegativeInt } from "../../schema.js"
 import { Session } from "../../session.js"
+import { WriteSerialization } from "../write-serialization.js"
 import { SessionSchema } from "../../session/schema.js"
 import { Shell } from "../../shell.js"
 import { ShellParse } from "../../shell/parse.js"
@@ -204,7 +205,9 @@ export const Plugin = {
           input: Input,
           output: Output,
           execute: (input, context) =>
-            Effect.gen(function* () {
+            WriteSerialization.serialized(
+              context.sessionID,
+              Effect.gen(function* () {
               const timeout = input.background === true ? (input.timeout ?? 0) : (input.timeout ?? DEFAULT_TIMEOUT_MS)
               let finalTimeout = timeout
               const info = yield* shell.create(
@@ -273,7 +276,8 @@ export const Plugin = {
               if (result?.info.status === "cancelled") return yield* Effect.fail(new Error("Command cancelled"))
 
               return yield* Deferred.await(settled)
-            }).pipe(
+              }),
+            ).pipe(
               Effect.map(toolResult),
               Effect.mapError(
                 (error) => new ToolFailure({ message: `Unable to execute command: ${input.command}`, error }),

@@ -12,6 +12,7 @@ import { FileDiff } from "@opencode-ai/schema/file-diff"
 import { Bom } from "@opencode-ai/util/bom"
 import { Effect, Schema } from "effect"
 import { Environment } from "../../environment/index.js"
+import { WriteSerialization } from "../write-serialization.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Formatter } from "../../formatter.js"
 import { Location } from "../../location.js"
@@ -126,7 +127,9 @@ export const Plugin = {
           input: Input,
           output: Output,
           execute: (input, context) => {
-            return Effect.gen(function* () {
+            return WriteSerialization.serialized(
+              context.sessionID,
+              Effect.gen(function* () {
               const permissionSource = {
                 type: "tool" as const,
                 messageID: context.messageID,
@@ -217,7 +220,8 @@ export const Plugin = {
                 files: [fileDiff(result.resource, source, formatted)],
                 replacements,
               } satisfies Output
-            }).pipe(
+              }),
+            ).pipe(
               fileMutation.withLock([LocationMutation.resolvePath(location.directory, input.path)]),
               Effect.map((output) => ({
                 output,

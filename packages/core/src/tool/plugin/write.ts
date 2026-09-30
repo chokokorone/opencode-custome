@@ -11,6 +11,7 @@ import { ToolFailure } from "@opencode-ai/ai"
 import { Effect, Schema } from "effect"
 import { Bom } from "@opencode-ai/util/bom"
 import { Environment } from "../../environment/index.js"
+import { WriteSerialization } from "../write-serialization.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Formatter } from "../../formatter.js"
 import { LocationMutation } from "../../location-mutation.js"
@@ -62,7 +63,9 @@ export const Plugin = {
           input: Input,
           output: Output,
           execute: (input, context) =>
-            Effect.gen(function* () {
+            WriteSerialization.serialized(
+              context.sessionID,
+              Effect.gen(function* () {
               const source = {
                 type: "tool" as const,
                 messageID: context.messageID,
@@ -97,7 +100,8 @@ export const Plugin = {
                 yield* FileMutation.syncTextBom(environment.files, target.absolute, bom)
               }
               return result
-            }).pipe(
+              }),
+            ).pipe(
               Effect.map((output) => ({ output, content: toModelContent(output) })),
               Effect.mapError((error) => new ToolFailure({ message: `Unable to write ${input.path}`, error })),
             ),
