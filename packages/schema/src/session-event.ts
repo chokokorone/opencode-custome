@@ -216,6 +216,18 @@ export const InboxDeliveryChanged = Event.durable({
 })
 export type InboxDeliveryChanged = typeof InboxDeliveryChanged.Type
 
+export const TeamMessageRejected = Event.ephemeral({
+  type: "team.message.rejected",
+  schema: {
+    ...Base,
+    teamID: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    reason: Schema.String,
+  },
+})
+export type TeamMessageRejected = typeof TeamMessageRejected.Type
+
 export namespace Execution {
   export const Started = Event.durable({ type: "session.execution.started", ...options, schema: Base })
   export type Started = typeof Started.Type
@@ -634,6 +646,7 @@ export const Definitions = Event.inventory(
   InboxEnqueued,
   InboxCancelled,
   InboxDeliveryChanged,
+  TeamMessageRejected,
   Execution.Started,
   Execution.Succeeded,
   Execution.Failed,

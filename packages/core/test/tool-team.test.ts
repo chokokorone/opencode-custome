@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Stream } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Bus } from "@opencode-ai/core/bus"
@@ -13,6 +13,7 @@ import { Permission } from "@opencode-ai/core/permission"
 import { Session } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionTeam } from "@opencode-ai/core/session/team"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { makeGlobalNode, makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { LayerNode } from "@opencode-ai/util/effect/layer-node"
 import { Global } from "@opencode-ai/util/global"
@@ -53,7 +54,7 @@ const teamPluginSupervisor = makeLocationNode({
       yield* registerToolPlugin(TeamTool.Plugin)
     }),
   ),
-  deps: [Agent.node, Config.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
+  deps: [Agent.node, Bus.node, Config.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
 })
 
 const nodes = LayerNode.group([
@@ -263,6 +264,53 @@ describe("TeamTool", () => {
               message: expect.stringContaining("team_roster is only available to members of a team"),
             },
           })
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool rejection events", () => {
+  it.live("publishes team.message.rejected when the router denies a message", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const bus = yield* Bus.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const leader = yield* sessions.create({ parentID: parent.id, title: "leader" })
+          const member = yield* sessions.create({ parentID: parent.id, title: "member" })
+          yield* team.register({ parentID: parent.id, teamID: "survey", sessionID: leader.id })
+          yield* team.register({ parentID: parent.id, teamID: "survey", sessionID: member.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const rejected = yield* bus.subscribe(SessionEvent.TeamMessageRejected).pipe(
+            Stream.filter((event) => event.data.sessionID === member.id),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const denied = yield* executeTool(registry, {
+            sessionID: member.id,
+            ...toolIdentity,
+            call: { type: "tool-call" as const, id: "call-rejected-event", name: "message_to_peer", input: { to: "Boss", text: "hi" } },
+          })
+          expect(denied.status).toBe("error")
+          const events = Array.from(yield* Fiber.join(rejected))
+          expect(events).toHaveLength(1)
+          expect(events[0]?.data).toMatchObject({
+            teamID: "survey",
+            from: "survey-2 (member)",
+            to: "Boss",
+          })
+          expect(events[0]?.data.reason).toContain("Only the leader can message Boss")
         }),
       ),
     ),

@@ -3,7 +3,10 @@ export * as TeamTool from "./team.js"
 import { SystemPart, ToolFailure } from "@opencode-ai/ai"
 import type { Context } from "@opencode-ai/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
+import { Bus } from "../../bus.js"
+import { Config } from "../../config.js"
 import { Session } from "../../session.js"
+import { SessionEvent } from "../../session/event.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SessionTeam } from "../../session/team.js"
 import { TeamPolicy } from "../../session/team-policy.js"
@@ -56,6 +59,8 @@ export const Plugin = {
   effect: Effect.fn("TeamTool.Plugin")(function* (ctx: Context) {
     const sessions = yield* Session.Service
     const team = yield* SessionTeam.Service
+    const config = yield* Config.Service
+    const bus = yield* Bus.Service
 
     const resolveSender = (sessionID: SessionSchema.ID) =>
       Effect.gen(function* () {
@@ -85,30 +90,64 @@ export const Plugin = {
         })
       })
 
+    const rulesFor: (teamID: string | undefined) => Effect.Effect<readonly TeamPolicy.Rule[]> = (teamID) =>
+      Effect.gen(function* () {
+        if (!teamID) return []
+        const entries = yield* config.entries()
+        const configured = Config.latest(entries, "teams")?.find((entry) => entry.teamID === teamID)
+        return configured?.rules ?? []
+      })
+
+    const senderLabel = (sender: Sender) =>
+      sender.kind === "boss" ? "Boss" : `${sender.membership.name} (${sender.membership.role})`
+
+    const reject = (sender: Sender, teamID: string, to: string, reason: string) =>
+      Effect.gen(function* () {
+        yield* bus.publish(SessionEvent.TeamMessageRejected, {
+          sessionID: sender.kind === "boss" ? sender.sessionID : sender.membership.sessionID,
+          teamID,
+          from: senderLabel(sender),
+          to,
+          reason,
+        })
+        return yield* new ToolFailure({ message: reason })
+      })
+
     const resolveRecipient = (sender: Sender, to: string) =>
       Effect.gen(function* () {
-        const recipient: TeamPolicy.Recipient =
-          to === "Boss" ? { kind: "boss" } : { kind: "peer", name: to }
-        const verdict = TeamPolicy.decide(sender.kind, recipient)
-        if (!verdict.allowed) {
-          return yield* new ToolFailure({
-            message: verdict.reason ?? `Cannot send a message to "${to}".`,
-          })
-        }
         if (sender.kind === "boss") {
-          const matches = sender.teams
-            .flatMap((team) => team.entries)
-            .filter((entry) => entry.name === to)
-            .map((entry) => entry.sessionID)
+          const candidates = sender.teams.flatMap((team) =>
+            team.entries.map((entry) => ({ teamID: team.teamID, entry })),
+          )
+          const matches = candidates.filter(({ entry }) => entry.name === to)
           if (matches.length > 1)
             return yield* new ToolFailure({
               message: `Recipient "${to}" exists in multiple teams. Message one team at a time or use a name unique across your teams.`,
             })
-          return matches[0]
+          const found = matches[0]
+          if (!found) return undefined
+          const verdict = TeamPolicy.decide(sender.kind, { kind: "peer", name: to, role: found.entry.role }, yield* rulesFor(found.teamID))
+          if (!verdict.allowed)
+            return yield* reject(sender, found.teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
+          return found.entry.sessionID
         }
-        if (to === "Boss" && sender.kind === "leader") return sender.membership.parentID
+        const teamID = sender.membership.teamID
+        if (to === "Boss") {
+          const verdict = TeamPolicy.decide(sender.kind, { kind: "boss" }, yield* rulesFor(teamID))
+          if (!verdict.allowed) return yield* reject(sender, teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
+          if (sender.kind === "leader") return sender.membership.parentID
+          return undefined
+        }
         const entries = yield* team.roster(sender.membership)
-        return entries.find((entry) => entry.name === to)?.sessionID
+        const entry = entries.find((entry) => entry.name === to)
+        if (!entry) return undefined
+        const verdict = TeamPolicy.decide(
+          sender.kind,
+          { kind: "peer", name: to, role: entry.role },
+          yield* rulesFor(teamID),
+        )
+        if (!verdict.allowed) return yield* reject(sender, teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
+        return entry.sessionID
       })
 
     const peerSenderLabel = (sender: Sender) =>

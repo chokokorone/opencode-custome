@@ -12,6 +12,7 @@ import { ConfigLSP } from "@opencode-ai/schema/config/lsp"
 import { ConfigMedia } from "@opencode-ai/schema/config/media"
 import { ConfigMCP } from "@opencode-ai/schema/config/mcp"
 import { ConfigPlugin } from "@opencode-ai/schema/config/plugin"
+import { ConfigTeam } from "@opencode-ai/schema/config/team"
 import { ConfigPolicy } from "@opencode-ai/schema/config/policy"
 import { ConfigProvider } from "@opencode-ai/schema/config/provider"
 import { ConfigReference } from "@opencode-ai/schema/config/reference"
@@ -221,6 +222,9 @@ export function normalize(input: unknown): Result {
 
   const instructions = decodeList(input.instructions, Schema.String, ["instructions"], diagnostics, decodeEncoded)
   if (instructions.length || Array.isArray(input.instructions)) encoded.instructions = instructions
+
+  const teams = decodeList(input.teams, ConfigTeam.Info, ["teams"], diagnostics, decodeEncoded)
+  if (teams.length || Array.isArray(input.teams)) encoded.teams = teams
 
   return { type: "normalized", encoded, diagnostics }
 }
