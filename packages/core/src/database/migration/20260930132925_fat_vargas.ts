@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+// HARNESS: log FTS — hand-appended call, see docs/design-log.md
 import { LogFts } from "../../log/fts.js"
 import type { DatabaseMigration } from "../migration.js"
 
@@ -28,9 +29,9 @@ const migration: DatabaseMigration.Migration = {
       `)
       yield* tx.run(`CREATE INDEX \`log_project_idx\` ON \`log\` (\`project_id\`);`)
       yield* tx.run(`CREATE INDEX \`log_project_kind_idx\` ON \`log\` (\`project_id\`,\`kind\`);`)
-      // FTS objects live in LogFts.ensureLogFts, shared with the fresh-database
-      // bootstrap (which never runs this body). Kept as a call, not SQL, so the
-      // definition has a single source.
+      // HARNESS: log FTS — FTS objects live in LogFts.ensureLogFts, shared with the
+      // fresh-database bootstrap (which never runs this body). Kept as a call, not
+      // SQL, so the definition has a single source.
       yield* LogFts.ensureLogFts(tx)
     })
   },
