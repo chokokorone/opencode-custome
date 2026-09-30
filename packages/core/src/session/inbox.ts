@@ -448,6 +448,20 @@ export const has = Effect.fn("SessionInbox.has")(function* (
   return row !== undefined
 })
 
+/**
+ * Every Session that still owns at least one pending item, regardless of the
+ * previous process that admitted it. Boot recovery uses this to wake work that
+ * was admitted without a wake (admit-only) or lost its wake to a crash.
+ */
+export const sessionsWithPending = Effect.fn("SessionInbox.sessionsWithPending")(function* (db: DatabaseService) {
+  const rows = yield* db
+    .selectDistinct({ sessionID: SessionInboxTable.session_id })
+    .from(SessionInboxTable)
+    .all()
+    .pipe(Effect.orDie)
+  return rows.map((row) => row.sessionID)
+})
+
 const publishMutation = <A, E, R>(input: PendingRef, effect: Effect.Effect<A, E, R>) =>
   serialized(input.sessionID, effect).pipe(
     Effect.asVoid,

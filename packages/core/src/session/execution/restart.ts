@@ -3,10 +3,12 @@ export * as SessionRestart from "./restart.js"
 import { Context, Effect, Layer } from "effect"
 import { makeGlobalNode } from "@opencode-ai/util/effect/app-node"
 import { Bus } from "../../bus.js"
+import { Database } from "../../database/database.js"
 import { Job } from "../../job.js"
 import { Session } from "../../session.js"
 import { SessionEvent } from "../event.js"
 import { SessionExecution } from "../execution.js"
+import { SessionInbox } from "../inbox.js"
 import { SessionSchema } from "../schema.js"
 import { SessionStore } from "../store.js"
 import { ShellResult } from "../../shell/result.js"
@@ -71,6 +73,7 @@ export const layer = (options?: Options) =>
       const bus = yield* Bus.Service
       const jobs = yield* Job.Service
       const sessions = yield* Session.Service
+      const database = yield* Database.Service
       const scope = yield* Effect.scope
       const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
 
@@ -201,6 +204,17 @@ export const layer = (options?: Options) =>
             [...(yield* store.listSuspended()), ...children].filter((sessionID) => !active.has(sessionID)),
           )
           yield* store.releaseChildClaims(children)
+          // Pending work that never received a wake — admitted with resume:false, or
+          // a wake lost to a crash — leaves no claim behind, so the sweeps below
+          // cannot see it. wake is idempotent: an active Session joins its running
+          // drain instead of starting a second one.
+          const owned = yield* execution.active
+          const pendingSessions = yield* SessionInbox.sessionsWithPending(database.db)
+          yield* Effect.forEach(
+            pendingSessions.filter((sessionID) => !owned.has(sessionID) && !suspended.has(sessionID)),
+            (sessionID) => execution.wake(sessionID),
+            { discard: true, concurrency: "unbounded" },
+          )
           yield* Effect.forEach(
             // Admit shell outcomes before a recovered child can start its first model request.
             pending.toSorted((a, b) => Number(a.recovery.kind === "subagent") - Number(b.recovery.kind === "subagent")),
@@ -234,5 +248,5 @@ export const layer = (options?: Options) =>
 export const node = makeGlobalNode({
   service: Service,
   layer: layer(),
-  deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node],
+  deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node, Database.node],
 })
