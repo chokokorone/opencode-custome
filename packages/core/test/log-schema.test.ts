@@ -141,3 +141,36 @@ describe("log schema (stage 1)", () => {
     )
   })
 })
+
+describe("log schema consistency", () => {
+  test("fresh bootstrap and incremental migration produce identical sqlite_master", async () => {
+    await run(
+      Effect.gen(function* () {
+        const normalize = (value: string | null) => (value ?? "").replace(/\s+/g, " ").trim()
+        const dump = (db: Effect.Success<typeof makeDb>) =>
+          db
+            .all<{ type: string; name: string; tbl_name: string; sql: string | null }>(
+              sql`SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
+            )
+            .pipe(
+              Effect.map((rows) =>
+                rows.map((row) => `${row.type}|${row.name}|${row.tbl_name}|${normalize(row.sql)}`),
+              ),
+            )
+
+        const fresh = yield* makeDb
+        yield* DatabaseMigration.apply(fresh)
+
+        const upgraded = yield* makeDb
+        yield* DatabaseMigration.applyOnly(upgraded, migrations.slice(0, -1))
+        yield* DatabaseMigration.applyOnly(upgraded, migrations)
+
+        const [freshDump, upgradedDump] = yield* Effect.all([dump(fresh), dump(upgraded)])
+        expect(upgradedDump).toEqual(freshDump)
+        // The log objects are part of the compared surface, not just fellow travelers.
+        expect(freshDump.some((line) => line.includes("|log|"))).toBe(true)
+        expect(freshDump.some((line) => line.includes("log_fts"))).toBe(true)
+      }),
+    )
+  })
+})
