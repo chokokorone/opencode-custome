@@ -841,7 +841,15 @@ describe("SessionRestart background recovery", () => {
       yield* Deferred.await(parentWoken)
       expect(drained.filter((id) => id === child)).toHaveLength(1)
       expect(drained.filter((id) => id === parent)).toHaveLength(2)
+      // `unrelated` has no durable Job record, so it is an orphan: its parent is told.
       expect(yield* SessionInbox.list(database.db, parent)).toMatchObject([
+        {
+          id: "msg_subagent_unrelated_child_orphan",
+          payload: {
+            description: expect.stringContaining("will not be resumed automatically"),
+            metadata: { source: "subagent", childID: unrelated, state: "error" },
+          },
+        },
         {
           payload: {
             description: "Inspect recovery",
@@ -851,7 +859,8 @@ describe("SessionRestart background recovery", () => {
       ])
       expect(yield* restarted.pendingBackground).toEqual([])
       yield* restart.resumeSuspendedSessions
-      expect(yield* SessionInbox.list(database.db, parent)).toHaveLength(1)
+      // The deterministic id makes a repeated sweep idempotent.
+      expect(yield* SessionInbox.list(database.db, parent)).toHaveLength(2)
     }),
   )
 

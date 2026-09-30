@@ -26,6 +26,14 @@ const RESUME_EXHAUSTED = {
   message: "Execution was interrupted repeatedly and will not be resumed automatically.",
 } as const
 
+/** Told to the parent when a child died with the server instead of finishing. */
+const ORPHANED_SUBAGENT_NOTICE =
+  "Server restarted while you were working. This subagent was interrupted and will not be resumed automatically."
+
+/** Stable per child, so a repeated sweep re-admits the same row instead of duplicating. */
+const orphanNotificationID = (childID: SessionSchema.ID) =>
+  SessionMessage.ID.make("msg_" + childID.slice("ses_".length) + "_orphan")
+
 export interface Options {
   /**
    * Times a single turn may be resumed before it is terminalized instead.
@@ -207,10 +215,17 @@ export const layer = (options?: Options) =>
           const suspended = new Set(
             [...(yield* store.listSuspended()), ...children].filter((sessionID) => !active.has(sessionID)),
           )
-          yield* store.releaseChildClaims(children)
-          // Notify parents of children that lost their claim and will not be recovered
-          // (no durable Job marker = not in `children`). Do this before the recovery loop
-          // so that `SubagentCompletion.deliver` does not race with `recoverSubagent`.
+          // Notify parents of children that lost their claim and will not be recovered.
+          // `recoverable` covers every Session a durable Job record can still finish
+          // (subagent children and shell owners), so this only matches children that
+          // lost everything. The claim sweep below clears exactly these orphans, so
+          // they must be identified first — otherwise the query finds nothing and the
+          // parent is never told.
+          const recoverable = new Set(
+            pending.flatMap((background) =>
+              background.recovery.kind === "subagent" ? [background.recovery.childSessionID] : [background.recovery.sessionID],
+            ),
+          )
           const orphanedChildren = yield* database.db
             .select({ sessionID: SessionTable.id })
             .from(SessionTable)
@@ -218,7 +233,7 @@ export const layer = (options?: Options) =>
               and(
                 isNotNull(SessionTable.time_suspended),
                 isNotNull(SessionTable.parent_id),
-                ...(children.length > 0 ? [notInArray(SessionTable.id, Array.from(children))] : []),
+                ...(recoverable.size > 0 ? [notInArray(SessionTable.id, Array.from(recoverable))] : []),
               ),
             )
             .all()
@@ -226,19 +241,27 @@ export const layer = (options?: Options) =>
               Effect.orDie,
               Effect.map((rows: Array<{ sessionID: SessionSchema.ID }>) => rows.map((row) => row.sessionID))
             )
+          // Deliver before the recovery loop so `SubagentCompletion.deliver` cannot
+          // race `recoverSubagent`. resume:false keeps a suspended parent idle; the
+          // deterministic notification id makes a repeated sweep a no-op.
           yield* Effect.forEach(
             orphanedChildren,
             Effect.fnUntraced(function* (childID) {
               const child = yield* store.get(childID)
               if (!child) return
               if (!child.parentID) return
-              const parent = yield* store.get(child.parentID)
-              if (!parent) return
+              if (!(yield* store.get(child.parentID))) return
               const agentID = child.agent ?? Agent.ID.make("explore")
               yield* SubagentCompletion.deliver(sessions, jobs, {
                 status: "error",
-                recovery: { kind: "subagent", parentSessionID: parent.id, childSessionID: child.id, agent: agentID, description: "Recovered after server restart" },
-                notificationID: SessionMessage.ID.create(),
+                recovery: {
+                  kind: "subagent",
+                  parentSessionID: child.parentID,
+                  childSessionID: child.id,
+                  agent: agentID,
+                  description: ORPHANED_SUBAGENT_NOTICE,
+                },
+                notificationID: orphanNotificationID(childID),
                 resume: false,
               }).pipe(
                 Effect.catchTag("Session.NotFoundError", () => Effect.void),
@@ -248,6 +271,7 @@ export const layer = (options?: Options) =>
             }),
             { discard: true, concurrency: "unbounded" },
           )
+          yield* store.releaseChildClaims(children)
           // Pending work that never received a wake — admitted with resume:false, or
           // a wake lost to a crash — leaves no claim behind, so the sweeps below
           // cannot see it. wake is idempotent: an active Session joins its running
