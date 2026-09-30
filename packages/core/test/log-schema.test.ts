@@ -174,3 +174,33 @@ describe("log schema consistency", () => {
     )
   })
 })
+
+describe("log trigger coverage", () => {
+  test("every content column is guarded by the append-only trigger", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* DatabaseMigration.apply(db)
+        const columns = (
+          yield* db.all<{ name: string }>(sql`SELECT name FROM pragma_table_info('log')`)
+        ).map((row) => row.name)
+        const trigger = yield* db.get<{ sql: string }>(
+          sql`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'log_no_content_update'`,
+        )
+        expect(trigger).toBeDefined()
+        const clause = [...trigger!.sql.matchAll(/UPDATE OF\s+([\s\S]*?)\s+ON/gi)][0]?.[1] ?? ""
+        const guarded = new Set(
+          clause
+            .split(",")
+            .map((part) => part.replace(/[`"]/g, "").trim())
+            .filter((part) => part.length > 0),
+        )
+        // archived_at is the writable escape hatch; time_updated rides along with it.
+        for (const column of columns) {
+          if (column === "archived_at" || column === "time_updated") continue
+          expect(guarded.has(column)).toBe(true)
+        }
+      }),
+    )
+  })
+})

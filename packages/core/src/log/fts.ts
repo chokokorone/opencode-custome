@@ -42,7 +42,7 @@ export const ensureLogFts = (tx: Transaction) =>
     `)
     yield* tx.run(`
       CREATE TRIGGER IF NOT EXISTS \`log_no_content_update\` BEFORE UPDATE OF
-        project_id, session_id, team, agent, kind, summary, body, tags, refs, re
+        seq, project_id, session_id, team, agent, kind, summary, body, tags, refs, re, time_created
       ON \`log\` BEGIN
         SELECT RAISE(ABORT, 'log is append-only');
       END;
