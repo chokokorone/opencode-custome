@@ -169,6 +169,7 @@ export const Plugin = {
                   .prompt({
                     sessionID: child.id,
                     text: ["You are a subagent spawned by another session.", input.prompt!].join("\n"),
+                    metadata: { source: "subagent" },
                     resume: false,
                   })
                   .pipe(

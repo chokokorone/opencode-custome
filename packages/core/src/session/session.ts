@@ -12,6 +12,7 @@ import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
 import {
   BusyError,
+  ChildPromptError,
   CompactionConflictError,
   InboxConflictError,
   MessageIncompleteError,
@@ -151,10 +152,17 @@ export const make = Effect.fn("Session.make")(function* () {
     (sessionID: SessionSchema.ID, inboxID: SessionMessage.ID) => mutatePending(sessionID, inboxID, admission.queue),
     Effect.uninterruptible,
   )
+  // Prompts that originate from another agent carry a source marker. Anything
+  // else targeting a child session is a user reaching past the Boss, which the
+  // harness forbids at the runtime boundary (spec §29: members are view-only).
+  const agentPromptSources = new Set(["message_to_peer", "subagent"])
   const prompt = Effect.fn("Session.prompt")((sessionID: SessionSchema.ID, input: PromptRequest) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const session = yield* get(sessionID)
+        const source = input.metadata?.source
+        if (session.parentID !== undefined && !(typeof source === "string" && agentPromptSources.has(source)))
+          return yield* new ChildPromptError({ sessionID })
         const messageID = input.id ?? SessionMessage.ID.create()
         const admitted = yield* Effect.gen(function* () {
           const existing = yield* admission.reconcile({

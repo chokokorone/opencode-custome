@@ -108,6 +108,7 @@ export const Plugin = define({
                     ...input.prompt,
                     sessionID: child.id,
                     text: ["You are a subagent spawned by another session.", text].join("\n"),
+                    metadata: { source: "subagent" },
                     resume: false,
                   })
                   const recovery = {

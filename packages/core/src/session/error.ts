@@ -88,6 +88,14 @@ export class PromptConflictError extends Schema.TaggedError<PromptConflictError>
   messageID: SessionMessage.ID,
 }) {}
 
+export class ChildPromptError extends Schema.TaggedError<ChildPromptError>()("Session.ChildPromptError", {
+  sessionID: SessionSchema.ID,
+}) {
+  override get message() {
+    return "Direct prompts to a child session are rejected: talk to the top-level (Boss) session instead."
+  }
+}
+
 export class SyntheticConflictError extends Schema.TaggedError<SyntheticConflictError>()(
   "Session.SyntheticConflictError",
   {

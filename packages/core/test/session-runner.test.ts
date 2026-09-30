@@ -4115,7 +4115,9 @@ describe("SessionRunnerLLM", () => {
       .where(eq(SessionTable.id, sessionID))
       .run()
       .pipe(Effect.orDie)
-    yield* s.runPrompt("Run child request")
+    // The session is a simulated child here, so the prompt carries an agent source.
+    yield* s.session.prompt({ sessionID, text: "Run child request", metadata: { source: "subagent" }, resume: false })
+    yield* s.resume
 
     expect(s.requests[0]?.http?.headers?.["x-parent-session-id"]).toBe(parentID)
   })
