@@ -85,7 +85,14 @@ const layer = Layer.effect(
             .where(eq(SessionTeamTable.parent_id, input.parentID))
             .pipe(Effect.orDie)
           const siblings = rows.filter((row) => row.team_id === input.teamID)
-          const position = siblings.length
+          const suffixes = siblings.flatMap((row) => {
+            const rest = row.name.startsWith(`${input.teamID}-`) ? row.name.slice(input.teamID.length + 1) : undefined
+            return rest !== undefined && /^\d+$/.test(rest) ? [Number(rest)] : []
+          })
+          const next = suffixes.length > 0 ? Math.max(...suffixes) + 1 : 1
+          const positions = siblings.map((row) => row.position)
+          const position = positions.length > 0 ? Math.max(...positions) + 1 : 0
+          const leaderExists = siblings.some((row) => row.role === "leader")
           return yield* db
             .insert(SessionTeamTable)
             .values({
@@ -93,8 +100,8 @@ const layer = Layer.effect(
               parent_id: input.parentID,
               team_id: input.teamID,
               session_id: input.sessionID,
-              name: `${input.teamID}-${rows.length + 1}`,
-              role: position === 0 ? "leader" : "member",
+              name: `${input.teamID}-${next}`,
+              role: leaderExists ? "member" : "leader",
               position,
               time_created: Date.now(),
             })
