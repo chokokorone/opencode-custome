@@ -128,6 +128,12 @@ export type Outcome =
   | Pick<SessionMessage.CompactionFailed, "status" | "error">
 
 export interface Interface extends State.Transformable<Editor> {
+  /**
+   * CompactionModule boundary (spec §30): the summarization algorithm behind
+   * this tag. Replacements provide this Service (e.g. a turn-log compactor)
+   * and every consumer — the runner drains, manual compaction — follows
+   * without code changes. Settings stay adjustable through `transform`.
+   */
   readonly enabled: () => boolean
   readonly required: (input: RequiredInput) => boolean
   readonly compact: (input: AutoInput) => Effect.Effect<Outcome>
