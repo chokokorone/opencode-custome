@@ -6,6 +6,7 @@ import { Effect, Schema } from "effect"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SessionTeam } from "../../session/team.js"
+import { TeamPolicy } from "../../session/team-policy.js"
 
 const peerToolDescription = [
   "Sends a message to an entry of your current team roster. The message is delivered while the recipient is running (at its next step boundary) or wakes it up if it is idle.",
@@ -86,6 +87,14 @@ export const Plugin = {
 
     const resolveRecipient = (sender: Sender, to: string) =>
       Effect.gen(function* () {
+        const recipient: TeamPolicy.Recipient =
+          to === "Boss" ? { kind: "boss" } : { kind: "peer", name: to }
+        const verdict = TeamPolicy.decide(sender.kind, recipient)
+        if (!verdict.allowed) {
+          return yield* new ToolFailure({
+            message: verdict.reason ?? `Cannot send a message to "${to}".`,
+          })
+        }
         if (sender.kind === "boss") {
           const matches = sender.teams
             .flatMap((team) => team.entries)

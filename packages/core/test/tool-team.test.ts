@@ -125,8 +125,9 @@ describe("TeamTool", () => {
           const memberToBoss = yield* call(member.id, "call-member-to-boss", { to: "Boss", text: "hi" })
           expect(memberToBoss).toEqual({
             status: "error",
-            error: { type: "tool.execution", message: expect.stringContaining('No roster entry named "Boss"') },
+            error: { type: "tool.execution", message: expect.stringContaining("Only the leader can message Boss") },
           })
+          expect(memberToBoss.error?.message).toContain("via the leader")
 
           const fromBoss = yield* call(parent.id, "call-boss-to-member", { to: "survey-2", text: "keep going" })
           expect(fromBoss.status).toBe("completed")
@@ -141,6 +142,24 @@ describe("TeamTool", () => {
             error: { type: "tool.execution", message: expect.stringContaining('No roster entry named "Nobody"') },
           })
           expect(unknown.error?.message).toContain("- survey-2 (member)")
+
+          const member2 = yield* sessions.create({ parentID: parent.id, title: "member2" })
+          yield* team.register({ parentID: parent.id, teamID: "survey", sessionID: member2.id })
+
+          const memberToMember = yield* call(member.id, "call-member-to-member", {
+            to: "survey-3",
+            text: "heads up",
+          })
+          expect(memberToMember.status).toBe("completed")
+          expect(text(memberToMember)).toContain("Message sent to survey-3.")
+          expect(yield* inboxTexts(sessions, member2.id)).toEqual(["From survey-2 (member):\nheads up"])
+
+          const bossToLeader = yield* call(parent.id, "call-boss-to-leader", { to: "survey-1", text: "noted" })
+          expect(bossToLeader.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, leader.id)).toEqual([
+            "From survey-2 (member):\ndone",
+            "From Boss:\nnoted",
+          ])
         }),
       ),
     ),
