@@ -77,6 +77,26 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`log\` (
+          \`seq\` integer PRIMARY KEY AUTOINCREMENT,
+          \`project_id\` text NOT NULL,
+          \`session_id\` text,
+          \`team\` text,
+          \`agent\` text,
+          \`kind\` text NOT NULL,
+          \`summary\` text NOT NULL,
+          \`body\` text,
+          \`tags\` text,
+          \`refs\` text,
+          \`re\` integer,
+          \`archived_at\` integer,
+          \`time_created\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL,
+          CONSTRAINT "log_kind_check" CHECK(kind IN ('note', 'finding', 'question', 'failure', 'decision', 'request', 'digest')),
+          CONSTRAINT "log_summary_len_check" CHECK(length(summary) <= 100)
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`permission\` (
           \`id\` text PRIMARY KEY,
           \`project_id\` text NOT NULL,
@@ -254,6 +274,8 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
       `)
       yield* tx.run(`CREATE UNIQUE INDEX \`event_aggregate_seq_idx\` ON \`event\` (\`aggregate_id\`,\`seq\`);`)
       yield* tx.run(`CREATE INDEX \`event_aggregate_type_seq_idx\` ON \`event\` (\`aggregate_id\`,\`type\`,\`seq\`);`)
+      yield* tx.run(`CREATE INDEX \`log_project_idx\` ON \`log\` (\`project_id\`);`)
+      yield* tx.run(`CREATE INDEX \`log_project_kind_idx\` ON \`log\` (\`project_id\`,\`kind\`);`)
       yield* tx.run(
         `CREATE UNIQUE INDEX \`permission_project_action_resource_idx\` ON \`permission\` (\`project_id\`,\`action\`,\`resource\`);`,
       )

@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm"
 import { Effect } from "effect"
 import { supportsForeignKeyToggle } from "#sqlite"
 import type { EffectDrizzleSqlite } from "./drizzle.js"
+import { LogFts } from "../log/fts.js"
 import { migrations } from "./migration.gen.js"
 import schema from "./schema.gen.js"
 import { Global } from "@opencode-ai/util/global"
@@ -34,6 +35,10 @@ export function apply(db: Database) {
     yield* db.transaction((tx) =>
       Effect.gen(function* () {
         yield* schema.up(tx)
+        // schema.gen.ts is fully regenerated from drizzle definitions, which
+        // cannot express FTS virtual tables. Objects owned by LogFts are created
+        // here so a fresh database matches a migrated one.
+        yield* LogFts.ensureLogFts(tx)
         yield* tx.run(
           sql`CREATE TABLE ${sql.identifier("migration")} (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)`,
         )
