@@ -165,6 +165,50 @@ describe("TeamTool", () => {
     ),
   )
 
+  it.live("blocks Boss-addressing variants from members", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const leader = yield* sessions.create({ parentID: parent.id, title: "leader" })
+          const member = yield* sessions.create({ parentID: parent.id, title: "member" })
+          yield* team.register({ parentID: parent.id, teamID: "survey", sessionID: leader.id })
+          yield* team.register({ parentID: parent.id, teamID: "survey", sessionID: member.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const variants = ["boss", "BOSS", " Boss ", parent.id, ""]
+          yield* Effect.forEach(
+            variants,
+            (to, index) =>
+              Effect.gen(function* () {
+                const result = yield* executeTool(registry, {
+                  sessionID: member.id,
+                  ...toolIdentity,
+                  call: {
+                    type: "tool-call" as const,
+                    id: `call-member-variant-${index}`,
+                    name: "message_to_peer",
+                    input: { to, text: "hi" },
+                  },
+                })
+                expect(result.status).toBe("error")
+              }),
+            { discard: true },
+          )
+          expect(yield* inboxTexts(sessions, parent.id)).toEqual([])
+        }),
+      ),
+    ),
+  )
+
   it.live("renders the team roster per role and rejects non-participants", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
