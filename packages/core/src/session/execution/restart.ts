@@ -6,13 +6,17 @@ import { Bus } from "../../bus.js"
 import { Database } from "../../database/database.js"
 import { Job } from "../../job.js"
 import { Session } from "../../session.js"
+import { Agent } from "../../agent.js"
 import { SessionEvent } from "../event.js"
 import { SessionExecution } from "../execution.js"
 import { SessionInbox } from "../inbox.js"
+import { SessionMessage } from "../message.js"
 import { SessionSchema } from "../schema.js"
 import { SessionStore } from "../store.js"
+import { SessionTable } from "../sql.js"
 import { ShellResult } from "../../shell/result.js"
 import { SubagentCompletion } from "../subagent-completion.js"
+import { and, isNotNull, notInArray } from "drizzle-orm"
 
 const CONTINUE_AFTER_SERVER_RESTART =
   "The server restarted while you were working. Continue from where you left off without repeating completed work."
@@ -204,6 +208,46 @@ export const layer = (options?: Options) =>
             [...(yield* store.listSuspended()), ...children].filter((sessionID) => !active.has(sessionID)),
           )
           yield* store.releaseChildClaims(children)
+          // Notify parents of children that lost their claim and will not be recovered
+          // (no durable Job marker = not in `children`). Do this before the recovery loop
+          // so that `SubagentCompletion.deliver` does not race with `recoverSubagent`.
+          const orphanedChildren = yield* database.db
+            .select({ sessionID: SessionTable.id })
+            .from(SessionTable)
+            .where(
+              and(
+                isNotNull(SessionTable.time_suspended),
+                isNotNull(SessionTable.parent_id),
+                ...(children.length > 0 ? [notInArray(SessionTable.id, Array.from(children))] : []),
+              ),
+            )
+            .all()
+            .pipe(
+              Effect.orDie,
+              Effect.map((rows: Array<{ sessionID: SessionSchema.ID }>) => rows.map((row) => row.sessionID))
+            )
+          yield* Effect.forEach(
+            orphanedChildren,
+            Effect.fnUntraced(function* (childID) {
+              const child = yield* store.get(childID)
+              if (!child) return
+              if (!child.parentID) return
+              const parent = yield* store.get(child.parentID)
+              if (!parent) return
+              const agentID = child.agent ?? Agent.ID.make("explore")
+              yield* SubagentCompletion.deliver(sessions, jobs, {
+                status: "error",
+                recovery: { kind: "subagent", parentSessionID: parent.id, childSessionID: child.id, agent: agentID, description: "Recovered after server restart" },
+                notificationID: SessionMessage.ID.create(),
+                resume: false,
+              }).pipe(
+                Effect.catchTag("Session.NotFoundError", () => Effect.void),
+                Effect.catchTag("Session.SyntheticConflictError", () => Effect.void),
+                Effect.orDie,
+              )
+            }),
+            { discard: true, concurrency: "unbounded" },
+          )
           // Pending work that never received a wake — admitted with resume:false, or
           // a wake lost to a crash — leaves no claim behind, so the sweeps below
           // cannot see it. wake is idempotent: an active Session joins its running
