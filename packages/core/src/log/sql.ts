@@ -17,7 +17,7 @@ export const LogTable = sqliteTable(
     summary: text().notNull(),
     body: text(),
     tags: text({ mode: "json" }).$type<string[]>(),
-    refs: text({ mode: "json" }).$type<number[]>(),
+    refs: text({ mode: "json" }).$type<string[]>(),
     re: integer(),
     archived_at: integer(),
     ...Timestamps,

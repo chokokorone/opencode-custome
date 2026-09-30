@@ -73,6 +73,9 @@ import { ShellTool } from "../tool/plugin/shell.js"
 import { SkillTool } from "../tool/plugin/skill.js"
 import { SubagentTool } from "../tool/plugin/subagent.js"
 import { TeamTool } from "../tool/plugin/team.js"
+import { LogTool } from "../tool/plugin/log.js"
+// HARNESS: log tools need durable storage (see docs/design-log.md)
+import { Database } from "../database/database.js"
 import { SessionTeam } from "../session/team.js"
 import { Tool } from "../tool.js"
 import { ToolOutput } from "../tool-output.js"
@@ -103,6 +106,7 @@ const services = [
   Config.Service,
   Credential.Service,
   Bus.Service,
+  Database.Service,
   Environment.Service,
   FileMutation.Service,
   Formatter.Service,
@@ -153,6 +157,8 @@ export const requirements = LayerNode.group([
   Config.node,
   Credential.node,
   Bus.node,
+  // HARNESS: log tools need durable storage (see docs/design-log.md)
+  Database.node,
   Environment.node,
   FileMutation.node,
   Formatter.node,
@@ -220,6 +226,7 @@ const pre = [
   SkillTool.Plugin,
   SubagentTool.Plugin,
   TeamTool.Plugin,
+  LogTool.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,
