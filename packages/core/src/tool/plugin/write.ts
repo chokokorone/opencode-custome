@@ -12,10 +12,13 @@ import { Effect, Schema } from "effect"
 import { Bom } from "@opencode-ai/util/bom"
 import { Environment } from "../../environment/index.js"
 import { WriteSerialization } from "../write-serialization.js"
+import { PathOwnership } from "../path-ownership.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Formatter } from "../../formatter.js"
 import { LocationMutation } from "../../location-mutation.js"
 import { Permission } from "../../permission.js"
+import { Session } from "../../session.js"
+import { SessionTeam } from "../../session/team.js"
 import { fileDiff } from "./file-diff.js"
 
 export const name = "write"
@@ -52,6 +55,8 @@ export const Plugin = {
     const environment = yield* Environment.Service
     const formatter = yield* Formatter.Service
     const permission = yield* Permission.Service
+    const sessions = yield* Session.Service
+    const team = yield* SessionTeam.Service
 
     yield* ctx.tool
       .transform((editor) =>
@@ -72,6 +77,12 @@ export const Plugin = {
                 id: context.id,
               }
               const target = yield* mutation.resolve({ path: input.path, kind: "file" })
+              yield* PathOwnership.assertMemberWrite({
+                sessions,
+                team,
+                sessionID: context.sessionID,
+                absolutePath: target.absolute,
+              })
               const external = target.externalDirectory
               if (external)
                 yield* permission.assert({

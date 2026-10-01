@@ -9,6 +9,12 @@ import { Job } from "@opencode-ai/core/job"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { Agent } from "@opencode-ai/core/agent"
+import { Environment } from "@opencode-ai/core/environment/index"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
+import { Formatter } from "@opencode-ai/core/formatter"
+import { LocationMutation } from "@opencode-ai/core/location-mutation"
+import { Shell } from "@opencode-ai/core/shell"
+import { ShellSelect } from "@opencode-ai/core/shell/select"
 import { Config } from "@opencode-ai/core/config"
 import { Permission } from "@opencode-ai/core/permission"
 import { Session } from "@opencode-ai/core/session"
@@ -23,6 +29,9 @@ import { Plugin } from "@opencode-ai/core/plugin"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { SubagentTool } from "@opencode-ai/core/tool/plugin/subagent"
 import { TeamTool } from "@opencode-ai/core/tool/plugin/team"
+import { WriteTool } from "@opencode-ai/core/tool/plugin/write"
+import { EditTool } from "@opencode-ai/core/tool/plugin/edit"
+import { ShellTool } from "@opencode-ai/core/tool/plugin/shell"
 import { Tool } from "@opencode-ai/core/tool"
 import { tmpdir } from "./fixture/tmpdir"
 import { tempGlobalLayer } from "./fixture/global"
@@ -53,9 +62,30 @@ const teamPluginSupervisor = makeLocationNode({
     Effect.gen(function* () {
       yield* registerToolPlugin(SubagentTool.Plugin)
       yield* registerToolPlugin(TeamTool.Plugin)
+      yield* registerToolPlugin(WriteTool.Plugin)
+      yield* registerToolPlugin(EditTool.Plugin)
+      yield* registerToolPlugin(ShellTool.Plugin)
     }),
   ),
-  deps: [Agent.node, Bus.node, Config.node, FSUtil.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
+  deps: [
+    Agent.node,
+    Bus.node,
+    Config.node,
+    FSUtil.node,
+    Permission.node,
+    Session.node,
+    SessionTeam.node,
+    Job.node,
+    Tool.node,
+    Database.node,
+    LocationMutation.node,
+    FileMutation.node,
+    Environment.node,
+    Formatter.node,
+    Location.node,
+    Shell.node,
+    ShellSelect.node,
+  ],
 })
 
 const nodes = LayerNode.group([
@@ -381,6 +411,83 @@ describe("TeamTool workspaces", () => {
           expect(directory.endsWith("/workspace/site/site-1")).toBe(true)
           const stat = yield* Effect.promise(() => import("fs/promises").then((fs) => fs.stat(directory)))
           expect(stat.isDirectory()).toBe(true)
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool path ownership", () => {
+  it.live("confines member writes to their workspace and test areas", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const leader = yield* sessions.create({ parentID: parent.id, title: "leader" })
+          const member = yield* sessions.create({ parentID: parent.id, title: "member" })
+          yield* team.register({ parentID: parent.id, teamID: "own", sessionID: leader.id })
+          yield* team.register({ parentID: parent.id, teamID: "own", sessionID: member.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+          yield* Agent.Service.use((agents) =>
+            agents.transform((editor) => {
+              editor.update(toolIdentity.agent, (agent) => {
+                agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+              })
+            }),
+          ).pipe(Effect.provide(locations.get(location)))
+          let calls = 0
+          const call = (sessionID: Session.ID, name: string, tool: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: tool, input },
+            })
+
+          const wsFile = "workspace/own/own-2/notes.txt"
+          const written = yield* call(member.id, "ws-write", "write", { path: wsFile, content: "member notes" })
+          expect(written.status).toBe("completed")
+
+          const edited = yield* call(member.id, "ws-edit", "edit", {
+            path: wsFile,
+            oldString: "member notes",
+            newString: "member notes v2",
+          })
+          expect(edited.status).toBe("completed")
+
+          const outside = yield* call(member.id, "outside", "write", { path: "shared.txt", content: "x" })
+          expect(outside.status).toBe("error")
+          expect(outside.error?.message).toContain("outside")
+
+          const sibling = yield* call(member.id, "sibling", "write", {
+            path: "workspace/own/own-1/other.txt",
+            content: "x",
+          })
+          expect(sibling.status).toBe("error")
+          expect(sibling.error?.message).toContain("Ask the leader")
+
+          const testArea = yield* call(member.id, "test-area", "write", {
+            path: "test/own/own-2/case.txt",
+            content: "x",
+          })
+          expect(testArea.status).toBe("completed")
+
+          const leaderWrite = yield* call(leader.id, "leader-write", "write", { path: "shared.txt", content: "x" })
+          expect(leaderWrite.status).toBe("completed")
+
+          const shellIn = yield* call(member.id, "shell-in", "shell", { command: "echo hi", workdir: "workspace/own/own-2" })
+          expect(shellIn.status).toBe("completed")
+
+          const shellOut = yield* call(member.id, "shell-out", "shell", { command: "echo hi", workdir: "." })
+          expect(shellOut.status).toBe("error")
+          expect(shellOut.error?.message).toContain("outside")
         }),
       ),
     ),

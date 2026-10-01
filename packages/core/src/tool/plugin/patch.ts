@@ -7,6 +7,9 @@ import { Effect, Result, Schema } from "effect"
 import { Bom } from "@opencode-ai/util/bom"
 import { Environment } from "../../environment/index.js"
 import { WriteSerialization } from "../write-serialization.js"
+import { PathOwnership } from "../path-ownership.js"
+import { Session } from "../../session.js"
+import { SessionTeam } from "../../session/team.js"
 import { Formatter } from "../../formatter.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Location } from "../../location.js"
@@ -69,6 +72,8 @@ export const Plugin = {
   effect: Effect.fn("PatchTool.Plugin")(function* (ctx: Context) {
     const environment = yield* Environment.Service
     const mutation = yield* LocationMutation.Service
+    const sessions = yield* Session.Service
+    const team = yield* SessionTeam.Service
     const fileMutation = yield* FileMutation.Service
     const formatter = yield* Formatter.Service
     const location = yield* Location.Service
@@ -118,6 +123,12 @@ export const Plugin = {
               const updates = new Map<string, string>()
               const resolveTarget = Effect.fnUntraced(function* (value: string) {
                 const target = yield* mutation.resolve({ path: value, kind: "file" })
+                yield* PathOwnership.assertMemberWrite({
+                  sessions,
+                  team,
+                  sessionID: context.sessionID,
+                  absolutePath: target.absolute,
+                })
                 if (!target.externalDirectory) return target
                 yield* permission.assert({
                   ...LocationMutation.externalDirectoryPermission(target.externalDirectory),

@@ -13,6 +13,9 @@ import { Bom } from "@opencode-ai/util/bom"
 import { Effect, Schema } from "effect"
 import { Environment } from "../../environment/index.js"
 import { WriteSerialization } from "../write-serialization.js"
+import { PathOwnership } from "../path-ownership.js"
+import { Session } from "../../session.js"
+import { SessionTeam } from "../../session/team.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Formatter } from "../../formatter.js"
 import { Location } from "../../location.js"
@@ -111,6 +114,8 @@ export const Plugin = {
   id: "opencode.tool.edit",
   effect: Effect.fn("EditTool.Plugin")(function* (ctx: Context) {
     const mutation = yield* LocationMutation.Service
+    const sessions = yield* Session.Service
+    const team = yield* SessionTeam.Service
     const fileMutation = yield* FileMutation.Service
     const environment = yield* Environment.Service
     const formatter = yield* Formatter.Service
@@ -147,6 +152,12 @@ export const Plugin = {
               }
 
               const target = yield* mutation.resolve({ path: input.path, kind: "file" })
+              yield* PathOwnership.assertMemberWrite({
+                sessions,
+                team,
+                sessionID: context.sessionID,
+                absolutePath: target.absolute,
+              })
               const external = target.externalDirectory
               if (external) {
                 yield* permission.assert({

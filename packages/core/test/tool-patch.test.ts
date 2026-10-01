@@ -12,6 +12,7 @@ import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { Permission } from "@opencode-ai/core/permission"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Session } from "@opencode-ai/core/session"
+import { SessionTeam } from "@opencode-ai/core/session/team"
 import { Tool } from "@opencode-ai/core/tool"
 import { PatchTool } from "@opencode-ai/core/tool/plugin/patch"
 import { transformEnvironmentFiles } from "./fixture/environment"
@@ -33,6 +34,8 @@ const patchToolNode = makeLocationNode({
     Formatter.node,
     Location.node,
     Permission.node,
+    Session.node,
+    SessionTeam.node,
   ],
 })
 

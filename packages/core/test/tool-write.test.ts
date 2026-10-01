@@ -12,6 +12,7 @@ import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { Permission } from "@opencode-ai/core/permission"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Session } from "@opencode-ai/core/session"
+import { SessionTeam } from "@opencode-ai/core/session/team"
 import { Tool } from "@opencode-ai/core/tool"
 import { WriteTool } from "@opencode-ai/core/tool/plugin/write"
 import { transformEnvironmentFiles } from "./fixture/environment"
@@ -25,7 +26,7 @@ import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "
 const writeToolNode = makeLocationNode({
   name: "test/write-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(WriteTool.Plugin)),
-  deps: [Tool.node, LocationMutation.node, FileMutation.node, Environment.node, Formatter.node, Permission.node],
+  deps: [Tool.node, LocationMutation.node, FileMutation.node, Environment.node, Formatter.node, Permission.node, Session.node, SessionTeam.node],
 })
 
 const sessionID = Session.ID.make("ses_write_tool_test")

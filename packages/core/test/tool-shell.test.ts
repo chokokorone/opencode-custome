@@ -24,6 +24,7 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Agent } from "@opencode-ai/core/agent"
 import { Job } from "@opencode-ai/core/job"
 import { Session } from "@opencode-ai/core/session"
+import { SessionTeam } from "@opencode-ai/core/session/team"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -134,6 +135,7 @@ const shellPluginSupervisor = makeLocationNode({
     LocationMutation.node,
     Permission.node,
     Session.node,
+    SessionTeam.node,
     Job.node,
     Shell.node,
     ShellSelect.node,

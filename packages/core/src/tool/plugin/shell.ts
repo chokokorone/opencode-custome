@@ -12,7 +12,9 @@ import { LocationMutation } from "../../location-mutation.js"
 import { Permission } from "../../permission.js"
 import { NonNegativeInt } from "../../schema.js"
 import { Session } from "../../session.js"
+import { SessionTeam } from "../../session/team.js"
 import { WriteSerialization } from "../write-serialization.js"
+import { PathOwnership } from "../path-ownership.js"
 import { SessionSchema } from "../../session/schema.js"
 import { Shell } from "../../shell.js"
 import { ShellParse } from "../../shell/parse.js"
@@ -102,6 +104,7 @@ export const Plugin = {
   id: "opencode.tool.shell",
   effect: Effect.fn("ShellTool.Plugin")(function* (ctx: Context) {
     const sessions = yield* Session.Service
+    const team = yield* SessionTeam.Service
     const jobs = yield* Job.Service
     const scope = yield* Scope.Scope
     const environment = yield* Environment.Service
@@ -120,6 +123,14 @@ export const Plugin = {
       }
       const target = yield* mutation.resolve({ path: invocation.cwd, kind: "directory" })
       invocation.cwd = target.absolute
+      // Shell text is not scanned for redirections: confinement applies to the
+      // working directory. Reads stay parallel; writes serialize per session.
+      yield* PathOwnership.assertMemberWrite({
+        sessions,
+        team,
+        sessionID: context.sessionID,
+        absolutePath: target.absolute,
+      })
       const timeout = invocation.timeout
       const portable = Config.latest(yield* config.entries(), "experimental")?.portable_shell_scanner === true
       const parsed = yield* ShellParse.scan(invocation.command, invocation.shell, target.absolute, { portable })
