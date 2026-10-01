@@ -78,6 +78,9 @@ export const make = Effect.gen(function* () {
       providerMetadataKey: input.model.model.route.providerMetadataKey ?? input.model.model.provider,
       snapshot: startSnapshot,
     })
+    const stepStart = Date.now()
+    let activeTools = 0
+    let maxParallelTools = 0
     const toolRuns: Array<{
       readonly call: ToolCall
       readonly fiber: Fiber.Fiber<void, Permission.DeclinedError | QuestionTool.CancelledError>
@@ -116,11 +119,24 @@ export const make = Effect.gen(function* () {
           toolRuns.push({
             call: event,
             fiber: yield* Effect.uninterruptibleMask((restore) =>
-              restore(executeTool(event)).pipe(
-                Effect.flatMap(toolOutput.truncate),
-                Effect.flatMap((outcome) => publisher.toolExecution(event.id, event.name, outcome)),
-                Effect.catchTag("Tool.Error", (error) =>
-                  publisher.failTool(event.id, toSessionError(error), error.metadata).pipe(Effect.asVoid),
+              restore(
+                Effect.acquireUseRelease(
+                  Effect.sync(() => {
+                    activeTools += 1
+                    maxParallelTools = Math.max(maxParallelTools, activeTools)
+                  }),
+                  () =>
+                    executeTool(event).pipe(
+                      Effect.flatMap(toolOutput.truncate),
+                      Effect.flatMap((outcome) => publisher.toolExecution(event.id, event.name, outcome)),
+                      Effect.catchTag("Tool.Error", (error) =>
+                        publisher.failTool(event.id, toSessionError(error), error.metadata).pipe(Effect.asVoid),
+                      ),
+                    ),
+                  () =>
+                    Effect.sync(() => {
+                      activeTools -= 1
+                    }),
                 ),
               ),
             ).pipe(Effect.forkScoped),
@@ -237,6 +253,12 @@ export const make = Effect.gen(function* () {
               ...usage,
               snapshot,
               files,
+              metrics: {
+                toolCalls: toolRuns.length,
+                maxParallelTools,
+                stepLatencyMs: Date.now() - stepStart,
+                contextBytes: Buffer.byteLength(JSON.stringify(input.prepared.request.messages ?? []), "utf-8"),
+              },
             })
         }
 

@@ -721,6 +721,14 @@ export type SessionLogOutput =
             }
             readonly snapshot?: (string & Brand.Brand<"Snapshot.ID">) | undefined
             readonly files?: ReadonlyArray<RelativePath> | undefined
+            readonly metrics?:
+              | {
+                  readonly toolCalls?: number | undefined
+                  readonly maxParallelTools?: number | undefined
+                  readonly stepLatencyMs?: number | undefined
+                  readonly contextBytes?: number | undefined
+                }
+              | undefined
           }
         }
       | {

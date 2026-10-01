@@ -1280,6 +1280,7 @@ export type SessionStepEnded = {
     tokens: TokenUsageInfo
     snapshot?: string
     files?: Array<string>
+    metrics?: { toolCalls?: number; maxParallelTools?: number; stepLatencyMs?: number; contextBytes?: number }
   }
 }
 

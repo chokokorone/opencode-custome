@@ -367,6 +367,12 @@ export namespace Step {
       tokens: TokenUsage.Info,
       snapshot: Snapshot.ID.pipe(optional),
       files: Schema.Array(RelativePath).pipe(optional),
+      metrics: Schema.Struct({
+        toolCalls: Schema.Int.pipe(optional),
+        maxParallelTools: Schema.Int.pipe(optional),
+        stepLatencyMs: Schema.Int.pipe(optional),
+        contextBytes: Schema.Int.pipe(optional),
+      }).pipe(optional),
     },
   })
   export type Ended = typeof Ended.Type
