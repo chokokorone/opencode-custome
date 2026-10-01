@@ -14,6 +14,9 @@ import { Bus } from "./bus.js"
 import { Instance } from "./instance/service.js"
 import { Database } from "./database/database.js"
 import { SessionProjector } from "./session/projector.js"
+import { SessionTeam } from "./session/team.js"
+import { SessionTeamWorkspace } from "./session/team-workspace.js"
+import { Git } from "./git.js"
 import { SessionMessageTable } from "./session/sql.js"
 import { SessionSchema } from "./session/schema.js"
 import { RelativePath } from "./schema.js"
@@ -226,6 +229,8 @@ const layer = Layer.effect(
     const llm = yield* LLMClient.Service
     const transport = yield* SessionModelTransport.Service
     const store = yield* SessionStore.Service
+    const team = yield* SessionTeam.Service
+    const git = yield* Git.Service
     const instances = yield* Instance.Service
     const moves = yield* SessionMove.Service
     const jobs = yield* Job.Service
@@ -339,13 +344,17 @@ const layer = Layer.effect(
       }),
       view: (input) => sessions.forSession(input.sessionID).view(input),
       remove: Effect.fn("Session.remove")(function* (sessionID) {
-        yield* result.get(sessionID)
+        const session = yield* result.get(sessionID)
         yield* execution.interrupt(sessionID)
         yield* execution.awaitIdle(sessionID)
         yield* transport.close(sessionID)
         const children = yield* result.list({ parentID: sessionID })
         yield* Effect.forEach(children.data, (child) => result.remove(child.id), { concurrency: 1, discard: true })
         yield* environments.clear(sessionID)
+        // Best-effort workspace cleanup for team members. Only registered git
+        // worktrees are removed, and never forced: dirty trees survive for
+        // manual care. Plain directories are left alone.
+        yield* SessionTeamWorkspace.remove({ team, git, store, session }).pipe(Effect.ignore)
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)
       }),
@@ -450,6 +459,8 @@ export const node: LayerNode.Provider<Service, never, typeof Node.tags.values.gl
     SessionInbox.node,
     SessionMove.node,
     SessionProjector.node,
+    SessionTeam.node,
+    Git.node,
     FSUtil.node,
     App.node,
   ],

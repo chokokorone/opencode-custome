@@ -20,6 +20,7 @@ import { Permission } from "@opencode-ai/core/permission"
 import { Session } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionTeam } from "@opencode-ai/core/session/team"
+import { Git } from "@opencode-ai/core/git"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { makeGlobalNode, makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { LayerNode } from "@opencode-ai/util/effect/layer-node"
@@ -85,6 +86,7 @@ const teamPluginSupervisor = makeLocationNode({
     Location.node,
     Shell.node,
     ShellSelect.node,
+    Git.node,
   ],
 })
 
@@ -513,6 +515,203 @@ describe("TeamTool prompt injection", () => {
           expect(text).toContain("tool_wait")
           expect(text).toContain("workspace/guide/")
           expect(text).toContain(membership.name)
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool git worktrees", () => {
+  it.live("creates a linked worktree on spawn and removes it with the session", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(async () => {
+            const run = (args: string[]) => {
+              const proc = Bun.spawnSync(["git", ...args], {
+                cwd: dir.path,
+                env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+              })
+              if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`)
+            }
+            run(["init", "-q"])
+            run(["config", "user.email", "test@test"])
+            run(["config", "user.name", "test"])
+            await Bun.write(`${dir.path}/README.md`, "repo\n")
+            run(["add", "."])
+            run(["commit", "-q", "-m", "init"])
+          })
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+          yield* Agent.Service.use((agents) =>
+            agents.transform((editor) => {
+              editor.update(toolIdentity.agent, (agent) => {
+                agent.mode = "primary"
+                agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+              })
+              editor.update(Agent.ID.make("reviewer"), (agent) => {
+                agent.mode = "subagent"
+              })
+            }),
+          ).pipe(Effect.provide(locations.get(location)))
+          let calls = 0
+          const call = (sessionID: Session.ID, name: string, tool: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: tool, input },
+            })
+
+          const spawned = yield* call(parent.id, "git-spawn", "subagent", {
+            agent: "reviewer",
+            description: "git worktree check",
+            team: "repo",
+          })
+          expect(spawned.status).toBe("completed")
+          const childID = spawned.metadata?.sessionID as Session.ID
+          const worktrees = yield* Effect.promise(async () => {
+            const proc = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { cwd: dir.path })
+            return proc.stdout.toString()
+          })
+          expect(worktrees).toContain("workspace/repo/repo-1")
+
+          yield* sessions.remove(childID)
+          const after = yield* Effect.promise(async () => {
+            const proc = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { cwd: dir.path })
+            return proc.stdout.toString()
+          })
+          expect(after).not.toContain("workspace/repo/repo-1")
+        }),
+      ),
+    ),
+  )
+
+  it.live("denies worktree creation when the policy says so", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(async () => {
+            const run = (args: string[]) => {
+              const proc = Bun.spawnSync(["git", ...args], {
+                cwd: dir.path,
+                env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+              })
+              if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`)
+            }
+            run(["init", "-q"])
+            run(["config", "user.email", "test@test"])
+            run(["config", "user.name", "test"])
+            run(["commit", "-q", "--allow-empty", "-m", "init"])
+          })
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+          yield* Agent.Service.use((agents) =>
+            agents.transform((editor) => {
+              editor.update(toolIdentity.agent, (agent) => {
+                agent.mode = "primary"
+                agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+                agent.permissions.push({ action: "worktree", resource: "*", effect: "deny" })
+              })
+              editor.update(Agent.ID.make("reviewer"), (agent) => {
+                agent.mode = "subagent"
+              })
+            }),
+          ).pipe(Effect.provide(locations.get(location)))
+          let calls = 0
+          const denied = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call" as const,
+              id: `call-deny-${(calls += 1)}`,
+              name: "subagent",
+              input: { agent: "reviewer", description: "denied worktree", team: "repo" },
+            },
+          })
+          expect(denied.status).toBe("error")
+          expect(denied).toEqual({
+            status: "error",
+            error: { type: "permission.rejected", message: expect.stringContaining("Permission denied: worktree") },
+          })
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool worktree dirty handling", () => {
+  it.live("keeps dirty worktrees on session removal", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(async () => {
+            const run = (args: string[]) => {
+              const proc = Bun.spawnSync(["git", ...args], {
+                cwd: dir.path,
+                env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+              })
+              if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`)
+            }
+            run(["init", "-q"])
+            run(["config", "user.email", "test@test"])
+            run(["config", "user.name", "test"])
+            run(["commit", "-q", "--allow-empty", "-m", "init"])
+          })
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+          yield* Agent.Service.use((agents) =>
+            agents.transform((editor) => {
+              editor.update(toolIdentity.agent, (agent) => {
+                agent.mode = "primary"
+                agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+              })
+              editor.update(Agent.ID.make("reviewer"), (agent) => {
+                agent.mode = "subagent"
+              })
+            }),
+          ).pipe(Effect.provide(locations.get(location)))
+          let calls = 0
+          const spawned = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call" as const,
+              id: `call-dirty-${(calls += 1)}`,
+              name: "subagent",
+              input: { agent: "reviewer", description: "dirty check", team: "repo" },
+            },
+          })
+          expect(spawned.status).toBe("completed")
+          const childID = spawned.metadata?.sessionID as Session.ID
+          const worktree = `${dir.path}/workspace/repo/repo-1`
+          yield* Effect.promise(() => Bun.write(`${worktree}/draft.txt`, "uncommitted work\n"))
+          yield* sessions.remove(childID)
+          const listed = yield* Effect.promise(async () => {
+            const proc = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { cwd: dir.path })
+            return proc.stdout.toString()
+          })
+          expect(listed).toContain("workspace/repo/repo-1")
         }),
       ),
     ),

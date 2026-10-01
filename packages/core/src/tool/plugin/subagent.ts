@@ -10,8 +10,10 @@ import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SessionTeam } from "../../session/team.js"
-import { SubagentJob } from "../../session/subagent-job.js"
 import { AbsolutePath } from "../../schema.js"
+import { SessionTeamWorkspace } from "../../session/team-workspace.js"
+import { SubagentJob } from "../../session/subagent-job.js"
+import { Git } from "../../git.js"
 import { FSUtil } from "@opencode-ai/util/fs-util"
 
 export const name = "subagent"
@@ -84,6 +86,7 @@ export const Plugin = {
     const team = yield* SessionTeam.Service
     const subagents = yield* SubagentJob.make
     const fs = yield* FSUtil.Service
+    const git = yield* Git.Service
 
     yield* ctx.tool
       .transform((editor) =>
@@ -200,24 +203,45 @@ export const Plugin = {
                     (error) => new ToolFailure({ message: `Failed to register team member: ${child.id}`, error }),
                   ),
                 )
-              // Each team member works in its own workspace directory. The move
-              // needs an existing directory, so create it first. No copy and no
-              // git integration: the member scaffolds here, and path-ownership
-              // rules (not filesystem isolation) keep members from colliding.
-              const workspace = AbsolutePath.make(
-                path.join(parent.location.directory, "workspace", teamID, membership.name),
-              )
-              yield* fs.ensureDir(workspace).pipe(
-                Effect.mapError(
-                  (error) => new ToolFailure({ message: `Failed to create workspace: ${workspace}`, error }),
-                ),
-              )
+              // Each team member works in its own workspace directory: a git
+              // worktree inside repositories (approval-gated), a plain directory
+              // otherwise. Anything failing below removes a fresh worktree again.
+              const repository = yield* git.repo.discover(parent.location.directory)
+              if (repository) {
+                yield* permission
+                  .assert({
+                    action: "worktree",
+                    resources: [
+                      AbsolutePath.make(path.join(parent.location.directory, "workspace", teamID, membership.name)),
+                    ],
+                    save: ["*"],
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    source: { type: "tool", messageID: context.messageID, id: context.id },
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ToolFailure({ message: `Worktree creation denied for team ${teamID}`, error }),
+                    ),
+                  )
+              }
+              const workspace = yield* SessionTeamWorkspace.prepare({
+                fs,
+                git,
+                repository: repository ?? undefined,
+                parentDir: parent.location.directory,
+                teamID,
+                name: membership.name,
+              })
               yield* sessions
-                .move({ sessionID: child.id, directory: workspace })
+                .move({ sessionID: child.id, directory: workspace.directory })
                 .pipe(
                   Effect.mapError(
-                    (error) => new ToolFailure({ message: `Failed to move team member to workspace: ${workspace}`, error }),
+                    (error) =>
+                      new ToolFailure({ message: `Failed to move team member to workspace: ${workspace.directory}`, error }),
                   ),
+                  Effect.tapError(() => workspace.cleanup),
                 )
               yield* sessions
                 .rename({
@@ -228,6 +252,7 @@ export const Plugin = {
                   Effect.mapError(
                     (error) => new ToolFailure({ message: `Failed to rename team member: ${child.id}`, error }),
                   ),
+                  Effect.tapError(() => workspace.cleanup),
                 )
               return dormantResult(membership)
             }).pipe(
