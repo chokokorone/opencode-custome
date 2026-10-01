@@ -78,6 +78,7 @@ import { LogRetention } from "../log/retention.js"
 import { LogTool } from "../tool/plugin/log.js"
 import { ToolWaitTool } from "../tool/plugin/wait.js"
 import { ResultReadTool } from "../tool/plugin/result-read.js"
+import { SessionStatsTool } from "../tool/plugin/session-stats.js"
 // HARNESS: log tools need durable storage (see docs/design-log.md)
 import { Database } from "../database/database.js"
 import { SessionTeam } from "../session/team.js"
@@ -237,6 +238,7 @@ const pre = [
   LogTool.Plugin,
   ToolWaitTool.Plugin,
   ResultReadTool.Plugin,
+  SessionStatsTool.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,
