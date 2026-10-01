@@ -73,6 +73,7 @@ import { ShellTool } from "../tool/plugin/shell.js"
 import { SkillTool } from "../tool/plugin/skill.js"
 import { SubagentTool } from "../tool/plugin/subagent.js"
 import { TeamTool } from "../tool/plugin/team.js"
+import { LogRetention } from "../log/retention.js"
 import { LogTool } from "../tool/plugin/log.js"
 import { ToolWaitTool } from "../tool/plugin/wait.js"
 import { ResultReadTool } from "../tool/plugin/result-read.js"
@@ -199,6 +200,8 @@ export const requirements = LayerNode.group([
   Watcher.node,
   WellKnown.node,
   Worktree.node,
+  // HARNESS: daily log retention (see docs/design-log.md)
+  LogRetention.cleanupNode,
 ])
 
 export type InternalPlugin = Plugin<Requirements | Scope.Scope>
