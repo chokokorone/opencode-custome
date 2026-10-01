@@ -139,8 +139,9 @@ export const Plugin = {
         if (to === "Boss") {
           const verdict = TeamPolicy.decide(sender.kind, { kind: "boss" }, yield* rulesFor(teamID))
           if (!verdict.allowed) return yield* reject(sender, teamID, to, verdict.reason ?? `Cannot send a message to "${to}".`)
-          if (sender.kind === "leader") return { target: sender.membership.parentID, teamID }
-          return undefined
+          // Allowed means deliverable: leaders own the route by default, and a
+          // config override extends it to whoever the rules permit.
+          return { target: sender.membership.parentID, teamID }
         }
         const entries = yield* team.roster(sender.membership)
         const entry = entries.find((entry) => entry.name === to)

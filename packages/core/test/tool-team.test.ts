@@ -717,3 +717,331 @@ describe("TeamTool worktree dirty handling", () => {
     ),
   )
 })
+
+describe("TeamTool §8 routing table", () => {
+  it.live("covers every routing cell end-to-end through message_to_peer", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const leader = yield* sessions.create({ parentID: parent.id, title: "leader" })
+          const member = yield* sessions.create({ parentID: parent.id, title: "member" })
+          yield* team.register({ parentID: parent.id, teamID: "matrix", sessionID: leader.id })
+          yield* team.register({ parentID: parent.id, teamID: "matrix", sessionID: member.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const call = (sessionID: Session.ID, id: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id, name: "message_to_peer", input },
+            })
+
+          // Boss → Leader (allowed).
+          const bossToLeader = yield* call(parent.id, "call-matrix-boss-to-leader", {
+            to: "matrix-1",
+            text: "b-to-l",
+          })
+          expect(bossToLeader.status).toBe("completed")
+          expect(text(bossToLeader)).toContain("Message sent to matrix-1.")
+          expect(yield* inboxTexts(sessions, leader.id)).toEqual(["From Boss:\nb-to-l"])
+
+          // Boss → Member (allowed).
+          const bossToMember = yield* call(parent.id, "call-matrix-boss-to-member", {
+            to: "matrix-2",
+            text: "b-to-m",
+          })
+          expect(bossToMember.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, member.id)).toEqual(["From Boss:\nb-to-m"])
+
+          // Leader → Boss (allowed).
+          const leaderToBoss = yield* call(leader.id, "call-matrix-leader-to-boss", {
+            to: "Boss",
+            text: "l-to-b",
+          })
+          expect(leaderToBoss.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, parent.id)).toEqual(["From matrix-1 (leader):\nl-to-b"])
+
+          // Leader → Member (allowed).
+          const leaderToMember = yield* call(leader.id, "call-matrix-leader-to-member", {
+            to: "matrix-2",
+            text: "l-to-m",
+          })
+          expect(leaderToMember.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, member.id)).toEqual([
+            "From Boss:\nb-to-m",
+            "From matrix-1 (leader):\nl-to-m",
+          ])
+
+          // Member → Leader (allowed).
+          const memberToLeader = yield* call(member.id, "call-matrix-member-to-leader", {
+            to: "matrix-1",
+            text: "m-to-l",
+          })
+          expect(memberToLeader.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, leader.id)).toEqual([
+            "From Boss:\nb-to-l",
+            "From matrix-2 (member):\nm-to-l",
+          ])
+
+          // Member → Member (allowed).
+          const member2 = yield* sessions.create({ parentID: parent.id, title: "member2" })
+          yield* team.register({ parentID: parent.id, teamID: "matrix", sessionID: member2.id })
+          const memberToMember = yield* call(member.id, "call-matrix-member-to-member", {
+            to: "matrix-3",
+            text: "m-to-m",
+          })
+          expect(memberToMember.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, member2.id)).toEqual(["From matrix-2 (member):\nm-to-m"])
+
+          // Member → Boss (denied with leader guidance).
+          const memberToBoss = yield* call(member.id, "call-matrix-member-to-boss", {
+            to: "Boss",
+            text: "m-to-b-denied",
+          })
+          expect(memberToBoss.status).toBe("error")
+          expect(memberToBoss.error?.message).toContain("Only the leader can message Boss")
+          expect(memberToBoss.error?.message).toContain("via the leader")
+          expect(yield* inboxTexts(sessions, parent.id)).toEqual(["From matrix-1 (leader):\nl-to-b"])
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool §9 config override", () => {
+  it.live("honors per-team rules end-to-end, including member to Boss allow", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          // The tool-team harness serves the real Config (Config.node via
+          // LocationServiceMap), not Config.Test: nodes lack a
+          // Config.node.replace(Config.testLayer()) unlike
+          // test/plugin/fixture.ts:103. Seed rules through opencode.json
+          // before the location layer first loads, mirroring
+          // test/tool-subagent.test.ts config seeding. Config.Test.setEntries
+          // coverage lives in test/config/team.test.ts.
+          yield* Effect.promise(() =>
+            Bun.write(
+              `${dir.path}/opencode.json`,
+              JSON.stringify({
+                teams: [
+                  { teamID: "open", rules: [{ from: "member", to: "boss", effect: "allow" }] },
+                  { teamID: "locked", rules: [{ from: "member", to: "peer", effect: "deny" }] },
+                ],
+              }),
+            ),
+          )
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const openLeader = yield* sessions.create({ parentID: parent.id, title: "open-leader" })
+          const openMember = yield* sessions.create({ parentID: parent.id, title: "open-member" })
+          const lockedLeader = yield* sessions.create({ parentID: parent.id, title: "locked-leader" })
+          const lockedMember = yield* sessions.create({ parentID: parent.id, title: "locked-member" })
+          const lockedMember2 = yield* sessions.create({ parentID: parent.id, title: "locked-member2" })
+          yield* team.register({ parentID: parent.id, teamID: "open", sessionID: openLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "open", sessionID: openMember.id })
+          yield* team.register({ parentID: parent.id, teamID: "locked", sessionID: lockedLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "locked", sessionID: lockedMember.id })
+          yield* team.register({ parentID: parent.id, teamID: "locked", sessionID: lockedMember2.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const entries = yield* Config.Service.pipe(
+            Effect.flatMap((service) => service.entries()),
+            Effect.provide(locations.get(location)),
+          )
+          const configured = Config.latest(entries, "teams")
+          expect(configured?.find((entry) => entry.teamID === "open")?.rules).toHaveLength(1)
+          expect(configured?.find((entry) => entry.teamID === "locked")?.rules).toHaveLength(1)
+
+          const call = (sessionID: Session.ID, id: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id, name: "message_to_peer", input },
+            })
+
+          // Working override: locked member to member is denied end-to-end
+          // (default allows, see §8 test). Proves per-team rules reach the tool.
+          const lockedDenied = yield* call(lockedMember.id, "call-locked-member-to-member", {
+            to: "locked-3",
+            text: "hi",
+          })
+          expect(lockedDenied.status).toBe("error")
+          expect(lockedDenied.error?.message).toContain("not allowed")
+          expect(yield* inboxTexts(sessions, lockedMember2.id)).toEqual([])
+
+          // Per-team scoping: the locked deny does not leak into the open team.
+          const openAllowed = yield* call(openMember.id, "call-open-member-to-leader", {
+            to: "open-1",
+            text: "hi",
+          })
+          expect(openAllowed.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, openLeader.id)).toEqual(["From open-2 (member):\nhi"])
+
+          // Config-allowed member to Boss delivers to the parent session.
+          const openToBoss = yield* call(openMember.id, "call-open-member-to-boss", {
+            to: "Boss",
+            text: "open-hello",
+          })
+          expect(openToBoss.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, parent.id)).toEqual(["From open-2 (member):\nopen-hello"])
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool §22 session separation", () => {
+  it.live("keeps team A deliveries out of team B member inboxes", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const alphaLeader = yield* sessions.create({ parentID: parent.id, title: "alpha-leader" })
+          const alphaMember = yield* sessions.create({ parentID: parent.id, title: "alpha-member" })
+          const betaLeader = yield* sessions.create({ parentID: parent.id, title: "beta-leader" })
+          const betaMember = yield* sessions.create({ parentID: parent.id, title: "beta-member" })
+          yield* team.register({ parentID: parent.id, teamID: "alpha", sessionID: alphaLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "alpha", sessionID: alphaMember.id })
+          yield* team.register({ parentID: parent.id, teamID: "beta", sessionID: betaLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "beta", sessionID: betaMember.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const call = (sessionID: Session.ID, id: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id, name: "message_to_peer", input },
+            })
+
+          const alpha = yield* call(alphaLeader.id, "call-alpha-to-member", {
+            to: "alpha-2",
+            text: "alpha-secret",
+          })
+          expect(alpha.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, alphaMember.id)).toEqual([
+            "From alpha-1 (leader):\nalpha-secret",
+          ])
+          expect(yield* inboxTexts(sessions, betaMember.id)).toEqual([])
+          expect(yield* inboxTexts(sessions, betaLeader.id)).toEqual([])
+
+          const beta = yield* call(betaLeader.id, "call-beta-to-member", {
+            to: "beta-2",
+            text: "beta-secret",
+          })
+          expect(beta.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, betaMember.id)).toEqual([
+            "From beta-1 (leader):\nbeta-secret",
+          ])
+          expect(yield* inboxTexts(sessions, alphaMember.id)).toEqual([
+            "From alpha-1 (leader):\nalpha-secret",
+          ])
+
+          const bossToAlpha = yield* call(parent.id, "call-boss-to-alpha", {
+            to: "alpha-2",
+            text: "boss-to-alpha",
+          })
+          expect(bossToAlpha.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, alphaMember.id)).toEqual([
+            "From alpha-1 (leader):\nalpha-secret",
+            "From Boss:\nboss-to-alpha",
+          ])
+          expect(yield* inboxTexts(sessions, betaMember.id)).toEqual([
+            "From beta-1 (leader):\nbeta-secret",
+          ])
+
+          const bossToBeta = yield* call(parent.id, "call-boss-to-beta", {
+            to: "beta-2",
+            text: "boss-to-beta",
+          })
+          expect(bossToBeta.status).toBe("completed")
+          expect(yield* inboxTexts(sessions, betaMember.id)).toEqual([
+            "From beta-1 (leader):\nbeta-secret",
+            "From Boss:\nboss-to-beta",
+          ])
+          expect(yield* inboxTexts(sessions, alphaMember.id)).toEqual([
+            "From alpha-1 (leader):\nalpha-secret",
+            "From Boss:\nboss-to-alpha",
+          ])
+        }),
+      ),
+    ),
+  )
+
+  it.live("rejects cross-team peer messages with the sender roster only", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const alphaLeader = yield* sessions.create({ parentID: parent.id, title: "alpha-leader" })
+          const alphaMember = yield* sessions.create({ parentID: parent.id, title: "alpha-member" })
+          const betaLeader = yield* sessions.create({ parentID: parent.id, title: "beta-leader" })
+          const betaMember = yield* sessions.create({ parentID: parent.id, title: "beta-member" })
+          yield* team.register({ parentID: parent.id, teamID: "alpha", sessionID: alphaLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "alpha", sessionID: alphaMember.id })
+          yield* team.register({ parentID: parent.id, teamID: "beta", sessionID: betaLeader.id })
+          yield* team.register({ parentID: parent.id, teamID: "beta", sessionID: betaMember.id })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+
+          const call = (sessionID: Session.ID, id: string, input: Record<string, unknown>) =>
+            executeTool(registry, {
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call" as const, id, name: "message_to_peer", input },
+            })
+
+          const cross = yield* call(alphaMember.id, "call-alpha-to-beta", {
+            to: "beta-2",
+            text: "sneaky",
+          })
+          expect(cross.status).toBe("error")
+          expect(cross.error?.message).toContain('No roster entry named "beta-2"')
+          expect(cross.error?.message).toContain("Team alpha:")
+          expect(cross.error?.message).not.toContain("beta-2 (member)")
+          expect(yield* inboxTexts(sessions, betaMember.id)).toEqual([])
+          expect(yield* inboxTexts(sessions, betaLeader.id)).toEqual([])
+
+          const leaderCross = yield* call(alphaLeader.id, "call-alpha-leader-to-beta", {
+            to: "beta-1",
+            text: "sneaky",
+          })
+          expect(leaderCross.status).toBe("error")
+          expect(leaderCross.error?.message).toContain('No roster entry named "beta-1"')
+          expect(yield* inboxTexts(sessions, betaLeader.id)).toEqual([])
+        }),
+      ),
+    ),
+  )
+})
