@@ -4,6 +4,7 @@ import { and, asc, eq } from "drizzle-orm"
 import { Context, Effect, Layer } from "effect"
 import { makeGlobalNode } from "@opencode-ai/util/effect/app-node"
 import { Database } from "../database/database.js"
+import type { ConfigTeam } from "@opencode-ai/schema/config/team"
 import { KeyedMutex } from "../effect/keyed-mutex.js"
 import { SessionSchema } from "./schema.js"
 import { SessionTeamTable } from "./sql.js"
@@ -157,3 +158,49 @@ const layer = Layer.effect(
 )
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node] })
+
+export interface Structure {
+  readonly teamID: string
+  readonly leader: string | undefined
+  readonly members: readonly string[] | undefined
+  readonly reportsTo: "boss" | undefined
+  readonly rules: readonly ConfigTeam.Rule[]
+}
+
+export type ResolveSuccess = {
+  readonly ok: true
+  readonly structure: Structure | undefined
+}
+
+export type ResolveFailure = {
+  readonly ok: false
+  readonly error: string
+}
+
+export type ResolveResult = ResolveSuccess | ResolveFailure
+
+const findEntry = (config: readonly ConfigTeam.Info[], teamID: string): ConfigTeam.Info | undefined =>
+  config.find((entry) => entry.teamID === teamID)
+
+const leaderError = (entry: ConfigTeam.Info): string | undefined => {
+  if (entry.leader === undefined) return undefined
+  if (entry.members === undefined) return undefined
+  if (entry.members.includes(entry.leader)) return undefined
+  return `leader "${entry.leader}" must appear in members for team "${entry.teamID}"`
+}
+
+const toStructure = (entry: ConfigTeam.Info): Structure => ({
+  teamID: entry.teamID,
+  leader: entry.leader,
+  members: entry.members,
+  reportsTo: entry.reports_to,
+  rules: entry.rules,
+})
+
+export function resolveStructure(config: readonly ConfigTeam.Info[], teamID: string): ResolveResult {
+  const entry = findEntry(config, teamID)
+  if (entry === undefined) return { ok: true, structure: undefined }
+  const error = leaderError(entry)
+  if (error !== undefined) return { ok: false, error }
+  return { ok: true, structure: toStructure(entry) }
+}

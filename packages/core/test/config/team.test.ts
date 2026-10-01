@@ -35,4 +35,28 @@ describe("ConfigTeam", () => {
       expect(TeamPolicy.decide("member", { kind: "boss" }, rules)).toEqual({ allowed: true })
     }).pipe(Effect.provide(Config.testLayer([document([])]))),
   )
+
+  it.live("loads team structure fields from config documents", () =>
+    Effect.gen(function* () {
+      const config = yield* Config.Test
+      yield* config.setEntries([
+        document([
+          {
+            teamID: "research",
+            rules: [],
+            leader: "research-1",
+            members: ["research-1", "research-2"],
+            reports_to: "boss",
+          },
+        ]),
+      ])
+
+      const entries = yield* config.entries()
+      const teams = Config.latest(entries, "teams")
+      const team = teams?.find((entry) => entry.teamID === "research")
+      expect(team?.leader).toBe("research-1")
+      expect(team?.members).toEqual(["research-1", "research-2"])
+      expect(team?.reports_to).toBe("boss")
+    }).pipe(Effect.provide(Config.testLayer([document([])]))),
+  )
 })
