@@ -12,8 +12,8 @@ import { ResultReadTool } from "@opencode-ai/core/tool/plugin/result-read"
 import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
-import { permissionLayer } from "./lib/permission"
-import { executeTool, registerToolPlugin, toolIdentity } from "./lib/tool"
+import { registerToolPlugin } from "./lib/tool"
+import { contentText, errorMessage, throwingPermission, toolCall } from "./lib/tool-extra"
 
 const resultReadNode = makeLocationNode({
   name: "test/result-read-plugin",
@@ -21,11 +21,7 @@ const resultReadNode = makeLocationNode({
   deps: [Tool.node, Global.node, FSUtil.node],
 })
 
-const fixture = () =>
-  permissionLayer({
-    ask: () => Effect.die(new Error("permission.ask must not be called by result_read")),
-    assert: () => Effect.die(new Error("permission.assert must not be called by result_read")),
-  })
+const fixture = () => throwingPermission("result_read")
 
 const withStore = <A, E>(
   body: (output: ToolOutput.Interface, registry: Tool.Interface) => Effect.Effect<A, E, any>,
@@ -52,12 +48,6 @@ const withStore = <A, E>(
 
 const it = testEffect(Layer.empty)
 
-const text = (settled: { content?: ReadonlyArray<Tool.Content> }) =>
-  (settled.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("\n")
-
-const err = (settled: { status: string; error?: { message?: string } }) =>
-  settled.status === "error" ? (settled.error?.message ?? "") : ""
-
 const sessionID = Session.ID.make("ses_result_read_test")
 
 describe("ResultReadTool", () => {
@@ -65,13 +55,9 @@ describe("ResultReadTool", () => {
     withStore(
       (output, registry) =>
       Effect.gen(function* () {
-        let calls = 0
+        const calls = { calls: 0 }
         const call = (input: Record<string, unknown>) =>
-          executeTool(registry, {
-            sessionID,
-            ...toolIdentity,
-            call: { type: "tool-call" as const, id: `call-read-${(calls += 1)}`, name: "result_read", input },
-          })
+          toolCall(registry, sessionID, "result_read", input, calls, "read")
         const spilled = yield* output.truncate({
           output: null,
           content: [{ type: "text", text: ["one", "two", "three", "four", "five"].join("\n") }],
@@ -82,16 +68,16 @@ describe("ResultReadTool", () => {
 
         const full = yield* call({ ref })
         expect(full.status).toBe("completed")
-        expect(text(full)).toContain("lines 1-5 of 5")
-        expect(text(full)).toContain("three")
+        expect(contentText(full)).toContain("lines 1-5 of 5")
+        expect(contentText(full)).toContain("three")
 
         const page = yield* call({ ref, offset: 3, limit: 10 })
-        expect(text(page)).toContain("lines 4-5 of 5")
-        expect(text(page)).toContain("four")
-        expect(text(page)).not.toContain("three\n")
+        expect(contentText(page)).toContain("lines 4-5 of 5")
+        expect(contentText(page)).toContain("four")
+        expect(contentText(page)).not.toContain("three\n")
 
         const pastEnd = yield* call({ ref, offset: 99 })
-        expect(text(pastEnd)).toContain("(empty)")
+        expect(contentText(pastEnd)).toContain("(empty)")
       }),
       { maxLines: 2, maxBytes: 1_000 },
     ),
@@ -100,21 +86,17 @@ describe("ResultReadTool", () => {
   it.live("refuses anything but spilled ids and reports missing files", () =>
     withStore((_output, registry) =>
       Effect.gen(function* () {
-        let calls = 0
+        const calls = { calls: 0 }
         const call = (input: Record<string, unknown>) =>
-          executeTool(registry, {
-            sessionID,
-            ...toolIdentity,
-            call: { type: "tool-call" as const, id: `call-refuse-${(calls += 1)}`, name: "result_read", input },
-          })
+          toolCall(registry, sessionID, "result_read", input, calls, "refuse")
         for (const ref of ["../../etc/passwd", "/etc/passwd", "not-a-ref", "", "tool_CUSTOM", "src/index.ts"]) {
           const denied = yield* call({ ref })
           expect(denied.status).toBe("error")
-          expect(err(denied)).toContain("Invalid ref")
+          expect(errorMessage(denied)).toContain("Invalid ref")
         }
         const missing = yield* call({ ref: "tool_0123456789ab" })
         expect(missing.status).toBe("error")
-        expect(err(missing)).toContain("No spilled output")
+        expect(errorMessage(missing)).toContain("No spilled output")
 
         for (const bad of [{ ref: "tool_0123456789ab", offset: -1 }, { ref: "tool_0123456789ab", limit: 0 }]) {
           const failed = yield* call(bad)
@@ -122,7 +104,7 @@ describe("ResultReadTool", () => {
         }
         const capped = yield* call({ ref: "tool_0123456789ab", limit: 5000 })
         expect(capped.status).toBe("error")
-        expect(err(capped)).toContain("max 2000")
+        expect(errorMessage(capped)).toContain("max 2000")
       }),
     ),
   )

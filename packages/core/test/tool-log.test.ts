@@ -27,20 +27,11 @@ import { tmpdir } from "./fixture/tmpdir"
 import { tempGlobalLayer } from "./fixture/global"
 import { testEffect } from "./lib/effect"
 import { executeTool, registerToolPlugin, toolIdentity } from "./lib/tool"
+import { contentText, errorMessage, throwingPermission, toolCall } from "./lib/tool-extra"
 
 // Approval gates must never fire for log tools: any ask/assert/reply attempt
 // is a test failure. Every tool call in this file runs behind this stub.
-const throwingPermission = Layer.succeed(
-  Permission.Service,
-  Permission.Service.of({
-    ask: () => Effect.die(new Error("permission.ask must not be called by log tools")),
-    assert: () => Effect.die(new Error("permission.assert must not be called by log tools")),
-    reply: () => Effect.die(new Error("permission.reply must not be called by log tools")),
-    get: () => Effect.succeed(undefined),
-    forSession: () => Effect.succeed([]),
-    list: () => Effect.succeed([]),
-  }),
-)
+const throwingLogPermission = throwingPermission("log tools")
 
 const executionNode = makeGlobalNode({
   service: SessionExecution.Service,
@@ -85,15 +76,9 @@ const it = testEffect(
     SessionExecution.node.replace(executionNode),
     Global.node.replace(tempGlobalLayer),
     PluginSupervisor.node.replace(logPluginSupervisor),
-    Permission.node.replace(throwingPermission),
+    Permission.node.replace(throwingLogPermission),
   ]),
 )
-
-const text = (settled: { content?: ReadonlyArray<Tool.Content> }) =>
-  (settled.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("\n")
-
-const err = (settled: { status: string; error?: { message?: string } }) =>
-  settled.status === "error" ? (settled.error?.message ?? "") : ""
 
 describe("LogTool", () => {
   it.live("adds rows with team attribution and validates input", () =>
@@ -115,13 +100,9 @@ describe("LogTool", () => {
             Effect.provide(locations.get(location)),
           )
           const database = yield* Database.Service
-          let calls = 0
+          const calls = { calls: 0 }
           const call = (sessionID: Session.ID, tool: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${tool}-${(calls += 1)}`, name: tool, input },
-            })
+            toolCall(registry, sessionID, tool, input, calls)
 
           const added = yield* call(memberSession.id, "log_add", {
             kind: "finding",
@@ -130,9 +111,9 @@ describe("LogTool", () => {
             tags: ["triage"],
           })
           expect(added.status).toBe("completed")
-          expect(text(added)).toMatch(/^L\d+$/)
+          expect(contentText(added)).toMatch(/^L\d+$/)
 
-          const seq = Number(text(added).slice(1))
+          const seq = Number(contentText(added).slice(1))
           const stored = yield* database.db.select().from(LogTable).where(eq(LogTable.seq, seq)).get().pipe(Effect.orDie)
           expect(stored?.agent).toBe("survey-1")
           expect(stored?.team).toBe("survey")
@@ -143,7 +124,7 @@ describe("LogTool", () => {
           const bossStored = yield* database.db
             .select()
             .from(LogTable)
-            .where(eq(LogTable.seq, Number(text(bossAdded).slice(1))))
+            .where(eq(LogTable.seq, Number(contentText(bossAdded).slice(1))))
             .get()
             .pipe(Effect.orDie)
           expect(bossStored?.agent).toBe("Boss")
@@ -160,7 +141,7 @@ describe("LogTool", () => {
           ]) {
             const failed = yield* call(memberSession.id, "log_add", bad.input)
             expect(failed.status).toBe("error")
-            expect(err(failed)).toContain(bad.reason)
+            expect(errorMessage(failed)).toContain(bad.reason)
           }
         }),
       ),
@@ -189,36 +170,32 @@ describe("LogTool", () => {
               yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(
                 Effect.provide(locations.get(locationA)),
               )
-              let calls = 0
+              const calls = { calls: 0 }
               const call = (sessionID: Session.ID, name: string, input: Record<string, unknown>) =>
-                executeTool(registry, {
-                  sessionID,
-                  ...toolIdentity,
-                  call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name, input },
-                })
+                toolCall(registry, sessionID, name, input, calls)
 
               const inA = yield* call(sessionA.id, "log_add", { kind: "note", summary: "only in A" })
               const inB = yield* call(sessionB.id, "log_add", { kind: "note", summary: "only in B" })
               expect(inA.status).toBe("completed")
               expect(inB.status).toBe("completed")
-              const idB = text(inB)
+              const idB = contentText(inB)
 
               const recent = yield* call(sessionA.id, "log_recent", {})
               expect(recent.status).toBe("completed")
-              expect(text(recent)).toContain("only in A")
-              expect(text(recent)).not.toContain("only in B")
+              expect(contentText(recent)).toContain("only in A")
+              expect(contentText(recent)).not.toContain("only in B")
 
               const search = yield* call(sessionA.id, "log_search", { query: "only" })
-              expect(text(search)).toContain("only in A")
-              expect(text(search)).not.toContain("only in B")
+              expect(contentText(search)).toContain("only in A")
+              expect(contentText(search)).not.toContain("only in B")
 
               const get = yield* call(sessionA.id, "log_get", { ids: [idB] })
               expect(get.status).toBe("error")
-              expect(err(get)).toContain(idB)
+              expect(errorMessage(get)).toContain(idB)
 
               const reOther = yield* call(sessionA.id, "log_add", { kind: "note", summary: "x", re: idB })
               expect(reOther.status).toBe("error")
-              expect(err(reOther)).toContain(idB)
+              expect(errorMessage(reOther)).toContain(idB)
             }),
           ),
         ),
@@ -244,32 +221,28 @@ describe("LogTool", () => {
           yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(
             Effect.provide(locations.get(location)),
           )
-          let calls = 0
+          const calls = { calls: 0 }
           const call = (sessionID: Session.ID, tool: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${tool}-${(calls += 1)}`, name: tool, input },
-            })
+            toolCall(registry, sessionID, tool, input, calls)
 
           yield* call(memberSession.id, "log_add", { kind: "finding", summary: "filter me one", tags: ["triage"] })
           yield* call(memberSession.id, "log_add", { kind: "question", summary: "filter me two" })
           yield* call(parent.id, "log_add", { kind: "finding", summary: "filter me three" })
 
           const byKind = yield* call(memberSession.id, "log_recent", { kind: "question" })
-          expect(text(byKind)).toContain("filter me two")
-          expect(text(byKind)).not.toContain("filter me one")
+          expect(contentText(byKind)).toContain("filter me two")
+          expect(contentText(byKind)).not.toContain("filter me one")
 
           const byTeam = yield* call(memberSession.id, "log_recent", { team: "survey" })
-          expect(text(byTeam)).toContain("filter me one")
-          expect(text(byTeam)).not.toContain("filter me three")
+          expect(contentText(byTeam)).toContain("filter me one")
+          expect(contentText(byTeam)).not.toContain("filter me three")
 
           const byTag = yield* call(memberSession.id, "log_search", { query: "filter", tag: "triage" })
-          expect(text(byTag)).toContain("filter me one")
-          expect(text(byTag)).not.toContain("filter me two")
+          expect(contentText(byTag)).toContain("filter me one")
+          expect(contentText(byTag)).not.toContain("filter me two")
 
           const limited = yield* call(memberSession.id, "log_recent", { n: 1 })
-          expect(text(limited).split("\n").filter((line) => line.length > 0)).toHaveLength(1)
+          expect(contentText(limited).split("\n").filter((line) => line.length > 0)).toHaveLength(1)
         }),
       ),
     ),
@@ -290,36 +263,28 @@ describe("LogTool", () => {
           yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(
             Effect.provide(locations.get(location)),
           )
-          let calls = 0
+          const calls = { calls: 0 }
           const call = (name: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID: session.id,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: "log_search", input },
-            })
+            toolCall(registry, session.id, "log_search", input, calls, name)
 
           const add = (name: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID: session.id,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: "log_add", input },
-            })
+            toolCall(registry, session.id, "log_add", input, calls, name)
           yield* add("a", { kind: "finding", summary: "日本語の検索対象" })
           yield* add("b", { kind: "note", summary: "a%b literal" })
           yield* add("c", { kind: "note", summary: "axb decoy" })
 
           const fts = yield* call("fts", { query: "日本語の検索" })
           expect(fts.status).toBe("completed")
-          expect(text(fts)).toContain("日本語の検索対象")
+          expect(contentText(fts)).toContain("日本語の検索対象")
 
           const like = yield* call("like", { query: "日本" })
           expect(like.status).toBe("completed")
-          expect(text(like)).toContain("日本語の検索対象")
+          expect(contentText(like)).toContain("日本語の検索対象")
 
           const escaped = yield* call("escaped", { query: "a%" })
           expect(escaped.status).toBe("completed")
-          expect(text(escaped)).toContain("a%b literal")
-          expect(text(escaped)).not.toContain("axb decoy")
+          expect(contentText(escaped)).toContain("a%b literal")
+          expect(contentText(escaped)).not.toContain("axb decoy")
 
           for (const tricky of ['"quoted" AND x -y', "a%b_c", ""]) {
             if (tricky === "") {
@@ -350,39 +315,31 @@ describe("LogTool", () => {
           yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(
             Effect.provide(locations.get(location)),
           )
-          let calls = 0
+          const calls = { calls: 0 }
           const add = (name: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID: session.id,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: "log_add", input },
-            })
+            toolCall(registry, session.id, "log_add", input, calls, name)
           const run = (name: string, tool: string, input: Record<string, unknown>) =>
-            executeTool(registry, {
-              sessionID: session.id,
-              ...toolIdentity,
-              call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: tool, input },
-            })
+            toolCall(registry, session.id, tool, input, calls, name)
 
           const first = yield* add("first", { kind: "finding", summary: "original", body: "details", tags: ["t"] })
-          const id1 = text(first)
+          const id1 = contentText(first)
           const second = yield* add("second", { kind: "decision", summary: "correction", re: id1 })
-          const id2 = text(second)
+          const id2 = contentText(second)
 
           const got = yield* run("get", "log_get", { ids: [id1, id2] })
           expect(got.status).toBe("completed")
-          expect(text(got)).toContain(id1)
-          expect(text(got)).toContain("  body: details")
-          expect(text(got)).toContain("  tags: t")
-          expect(text(got)).toContain(`  re: ${id1}`)
+          expect(contentText(got)).toContain(id1)
+          expect(contentText(got)).toContain("  body: details")
+          expect(contentText(got)).toContain("  tags: t")
+          expect(contentText(got)).toContain(`  re: ${id1}`)
 
           const big = "z".repeat(6000)
-          const b1 = text(yield* add("big-1", { kind: "note", summary: "big one", body: big }))
-          const b2 = text(yield* add("big-2", { kind: "note", summary: "big two", body: big }))
-          const b3 = text(yield* add("big-3", { kind: "note", summary: "big three", body: big }))
+          const b1 = contentText(yield* add("big-1", { kind: "note", summary: "big one", body: big }))
+          const b2 = contentText(yield* add("big-2", { kind: "note", summary: "big two", body: big }))
+          const b3 = contentText(yield* add("big-3", { kind: "note", summary: "big three", body: big }))
           const truncated = yield* run("truncated", "log_get", { ids: [b1, b2, b3] })
           expect(truncated.status).toBe("completed")
-          expect(text(truncated)).toContain("truncated")
+          expect(contentText(truncated)).toContain("truncated")
         }),
       ),
     ),
@@ -418,7 +375,7 @@ describe("LogTool", () => {
               }),
             { concurrency: "unbounded" },
           )
-          const ids = results.map((result) => text(result))
+          const ids = results.map((result) => contentText(result))
           expect(results.every((result) => result.status === "completed")).toBe(true)
           expect(new Set(ids).size).toBe(10)
           expect(ids.every((id) => /^L\d+$/.test(id))).toBe(true)

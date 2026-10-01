@@ -9,8 +9,8 @@ import { Tool } from "@opencode-ai/core/tool"
 import { ToolWaitTool } from "@opencode-ai/core/tool/plugin/wait"
 import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { testEffect } from "./lib/effect"
-import { permissionLayer } from "./lib/permission"
-import { executeTool, registerToolPlugin, toolIdentity } from "./lib/tool"
+import { registerToolPlugin } from "./lib/tool"
+import { contentText, errorMessage, throwingPermission, toolCall } from "./lib/tool-extra"
 
 const waitToolNode = makeLocationNode({
   name: "test/wait-tool-plugin",
@@ -18,17 +18,7 @@ const waitToolNode = makeLocationNode({
   deps: [Tool.node, Job.node],
 })
 
-const fixture = () => {
-  const calls: string[] = []
-  const permission = permissionLayer({
-    ask: () => Effect.die(new Error("permission.ask must not be called by tool_wait")),
-    assert: (input) =>
-      Effect.sync(() => void calls.push(`${input.action}`)).pipe(
-        Effect.andThen(Effect.die(new Error("permission.assert must not be called by tool_wait"))),
-      ),
-  })
-  return { calls, permission }
-}
+const fixture = () => ({ permission: throwingPermission("tool_wait") })
 
 const withTool = <A, E>(
   f: ReturnType<typeof fixture>,
@@ -47,25 +37,15 @@ const withTool = <A, E>(
 
 const it = testEffect(Layer.empty)
 
-const text = (settled: { content?: ReadonlyArray<Tool.Content> }) =>
-  (settled.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("\n")
-
-const err = (settled: { status: string; error?: { message?: string } }) =>
-  settled.status === "error" ? (settled.error?.message ?? "") : ""
-
 describe("ToolWaitTool", () => {
   it.live("waits for background jobs and reports each outcome", () =>
     withTool(fixture(), (registry) =>
       Effect.gen(function* () {
         const jobs = yield* Job.Service
         const sessionID = Session.ID.make("ses_tool_wait_owner")
-        let calls = 0
+        const calls = { calls: 0 }
         const call = (name: string, input: Record<string, unknown>) =>
-          executeTool(registry, {
-            sessionID,
-            ...toolIdentity,
-            call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: "tool_wait", input },
-          })
+          toolCall(registry, sessionID, "tool_wait", input, calls, name)
 
         const latch = yield* Deferred.make<void>()
         const done = yield* jobs.start({
@@ -87,7 +67,7 @@ describe("ToolWaitTool", () => {
           Effect.gen(function* () {
             const settled = yield* call("wait", { ids: [done.id, slow.id, "job-wait-missing"], timeout: 50 })
             expect(settled.status).toBe("completed")
-            return text(settled)
+            return contentText(settled)
           }),
         )
         // Release the latch only after the waiter is blocked, proving the
@@ -109,13 +89,9 @@ describe("ToolWaitTool", () => {
         const jobs = yield* Job.Service
         const sessionID = Session.ID.make("ses_tool_wait_owner")
         const otherID = Session.ID.make("ses_tool_wait_other")
-        let calls = 0
+        const calls = { calls: 0 }
         const call = (name: string, input: Record<string, unknown>) =>
-          executeTool(registry, {
-            sessionID,
-            ...toolIdentity,
-            call: { type: "tool-call" as const, id: `call-${name}-${(calls += 1)}`, name: "tool_wait", input },
-          })
+          toolCall(registry, sessionID, "tool_wait", input, calls, name)
 
         const foreign = yield* jobs.start({
           id: "job-wait-foreign",
@@ -126,7 +102,7 @@ describe("ToolWaitTool", () => {
         yield* jobs.background(foreign.id)
         const refused = yield* call("refused", { ids: [foreign.id] })
         expect(refused.status).toBe("completed")
-        expect(text(refused)).toContain("job-wait-foreign | forbidden | job belongs to another session")
+        expect(contentText(refused)).toContain("job-wait-foreign | forbidden | job belongs to another session")
 
         for (const bad of [
           { input: { ids: [] }, reason: "at least one" },
@@ -135,7 +111,7 @@ describe("ToolWaitTool", () => {
         ]) {
           const failed = yield* call("bad", bad.input)
           expect(failed.status).toBe("error")
-          expect(err(failed)).toContain(bad.reason)
+          expect(errorMessage(failed)).toContain(bad.reason)
         }
       }),
     ),
