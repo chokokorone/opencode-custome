@@ -274,6 +274,51 @@ export const Plugin = {
             }),
         })
         editor.add({
+          name: "log_stats",
+          options: { codemode: false },
+          description: "Counts log rows by kind and team for cost/usage awareness. Archived rows are hidden.",
+          input: Schema.Struct({
+            kind: Schema.optionalKey(Schema.String),
+            team: Schema.optionalKey(Schema.String),
+          }),
+          output: Schema.Struct({ output: Schema.String }),
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              const scope = yield* resolveScope(context.sessionID, context.agent)
+              const rows = yield* db
+                .select()
+                .from(LogTable)
+                .where(recentWhere(scope.projectID, input.kind, input.team))
+                .orderBy(desc(LogTable.seq))
+                .all()
+                .pipe(Effect.orDie)
+              const byKind = new Map<string, number>()
+              const byTeam = new Map<string, number>()
+              for (const row of rows) {
+                byKind.set(row.kind, (byKind.get(row.kind) ?? 0) + 1)
+                const teamKey = row.team ?? "-"
+                byTeam.set(teamKey, (byTeam.get(teamKey) ?? 0) + 1)
+              }
+              const rank = (entries: ReadonlyArray<readonly [string, number]>) =>
+                [...entries].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+              const kindText = rank([...byKind.entries()])
+                .map(([kind, count]) => `${kind} ${count}`)
+                .join(", ")
+              const teamText = rank([...byTeam.entries()])
+                .map(([teamName, count]) => `${teamName} ${count}`)
+                .join(", ")
+              const latest = rows[0]
+              const lines = [
+                `total: ${rows.length} (archived hidden)`,
+                `by kind: ${kindText === "" ? "-" : kindText}`,
+                `by team: ${teamText === "" ? "-" : teamText}`,
+                latest ? `latest: ${formatRow(latest)}` : "latest: none",
+              ]
+              const text = lines.join("\n")
+              return { output: { output: text }, content: text, metadata: { count: rows.length } }
+            }),
+        })
+        editor.add({
           name: "log_search",
           options: { codemode: false },
           description:
