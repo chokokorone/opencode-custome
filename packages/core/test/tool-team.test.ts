@@ -493,3 +493,28 @@ describe("TeamTool path ownership", () => {
     ),
   )
 })
+
+describe("TeamTool prompt injection", () => {
+  it.live("injects log, wait and path guidance into member context", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const team = yield* SessionTeam.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const member = yield* sessions.create({ parentID: parent.id, title: "member" })
+          const membership = yield* team.register({ parentID: parent.id, teamID: "guide", sessionID: member.id })
+          const text = TeamTool.memberRules(membership)
+          expect(text).toContain("log_add")
+          expect(text).toContain("tool_wait")
+          expect(text).toContain("workspace/guide/")
+          expect(text).toContain(membership.name)
+        }),
+      ),
+    ),
+  )
+})

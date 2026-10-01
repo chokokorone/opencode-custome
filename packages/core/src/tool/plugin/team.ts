@@ -43,7 +43,7 @@ type Sender =
   | { readonly kind: "leader"; readonly membership: SessionTeam.Membership }
   | { readonly kind: "member"; readonly membership: SessionTeam.Membership }
 
-const memberRules = (membership: SessionTeam.Membership) =>
+export const memberRules = (membership: SessionTeam.Membership) =>
   [
     `You are ${membership.name} (${membership.role}) in team ${membership.teamID}.`,
     "",
@@ -52,6 +52,10 @@ const memberRules = (membership: SessionTeam.Membership) =>
     "- The roster can grow as members join. Call team_roster to see current members.",
     "- Idle is a normal state. Incoming messages wake you automatically; do not poll or wait in a loop.",
     "- When your part is done, send your result to the relevant teammate (or Boss if you are the leader).",
+    "- Record findings, failures and decisions with log_add (one line summary, kind, tags); check log_search and log_recent before starting so work is not duplicated.",
+    "- For background jobs, wait once with tool_wait instead of polling; completions also arrive in the inbox.",
+    "- Issue independent tool calls together rather than one by one.",
+    `- Write files only inside workspace/${membership.teamID}/${membership.name}/ and test/${membership.teamID}/${membership.name}/. Changes elsewhere belong to the leader to integrate.`,
   ].join("\n")
 
 export const Plugin = {
