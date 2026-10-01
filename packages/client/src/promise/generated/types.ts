@@ -916,6 +916,24 @@ export type SessionUsageUpdated = {
   data: { sessionID: string; cost: MoneyUSD; tokens: TokenUsageInfo }
 }
 
+export type TeamMessageRejected = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "team.message.rejected"
+  location?: LocationRef
+  data: { sessionID: string; teamID: string; from: string; to: string; reason: string }
+}
+
+export type TeamMessageSent = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "team.message.sent"
+  location?: LocationRef
+  data: { sessionID: string; teamID: string; from: string; to: string; text: string }
+}
+
 export type SessionTextDelta = {
   id: string
   created: number
@@ -1997,6 +2015,14 @@ export type ConfigEntry =
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
         warming?: boolean | { prompt?: string; interval?: string; duration?: string }
+        teams?: Array<{
+          teamID: string
+          rules: Array<{
+            from: "boss" | "leader" | "member"
+            to: "boss" | "leader" | "member" | "peer"
+            effect: "allow" | "deny"
+          }>
+        }>
         providers?: {
           [x: string]: {
             canonical?: string
@@ -2264,6 +2290,8 @@ export type V2Event =
   | SessionInboxEnqueued
   | SessionInboxCancelled
   | SessionInboxDeliveryChanged
+  | TeamMessageRejected
+  | TeamMessageSent
   | SessionExecutionStarted
   | SessionExecutionSucceeded
   | SessionExecutionFailed

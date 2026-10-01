@@ -57,6 +57,7 @@ import { useDialog } from "../../ui/dialog"
 import { DialogSelect } from "../../ui/dialog-select"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { DialogSubagents } from "../../component/dialog-subagents"
+import { DialogTeamTimeline } from "../../component/dialog-team-timeline"
 import { DialogImagePreview } from "../../component/dialog-image-preview"
 import { DialogMessage } from "./dialog-message"
 import { DialogFork } from "./dialog-fork"
@@ -1227,6 +1228,15 @@ export function Session(props: {
       slash: { name: "subagents" },
       run: () => {
         dialog.replace(() => <DialogSubagents />)
+      },
+    },
+    {
+      title: "View team timeline",
+      id: "session.team.timeline",
+      group: "Session",
+      slash: { name: "team-timeline" },
+      run: () => {
+        dialog.replace(() => <DialogTeamTimeline />)
       },
     },
     {

@@ -14265,6 +14265,41 @@
               }
             ]
           },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "teamID": {
+                  "type": "string"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "enum": ["boss", "leader", "member"]
+                      },
+                      "to": {
+                        "type": "string",
+                        "enum": ["boss", "leader", "member", "peer"]
+                      },
+                      "effect": {
+                        "type": "string",
+                        "enum": ["allow", "deny"]
+                      }
+                    },
+                    "required": ["from", "to", "effect"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["teamID", "rules"],
+              "additionalProperties": false
+            }
+          },
           "providers": {
             "type": "object",
             "additionalProperties": {

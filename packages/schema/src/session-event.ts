@@ -235,6 +235,7 @@ export const TeamMessageSent = Event.ephemeral({
     teamID: Schema.String,
     from: Schema.String,
     to: Schema.String,
+    text: Schema.String,
   },
 })
 export type TeamMessageSent = typeof TeamMessageSent.Type

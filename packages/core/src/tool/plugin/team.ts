@@ -192,6 +192,7 @@ export const Plugin = {
                 teamID: resolved.teamID,
                 from: senderLabel(sender),
                 to: input.to,
+                text: input.text,
               })
               return {
                 output: { output: `Message sent to ${input.to}.` },
