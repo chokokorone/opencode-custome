@@ -491,3 +491,56 @@ it.effect("forked session compaction reuses the fork root prompt cache key", () 
     expect(requests[0]?.promptCacheKey).toBe(rootID)
   }),
 )
+
+it.effect("manual compaction includes turn logs for executed tools", () =>
+  Effect.gen(function* () {
+    requests = []
+    const compaction = yield* SessionCompaction.Service
+    const store = yield* SessionStore.Service
+    const sessionID = Session.ID.make("ses_manual_compaction_turns")
+    const parentID = Session.ID.make("ses_manual_compaction_turns_parent")
+    const session = yield* insertSession(sessionID, { parent_id: parentID })
+    const modelRequests = yield* SessionModelRequest.Service
+    const assistant = Schema.decodeUnknownSync(SessionMessage.Assistant)({
+      id: "msg_turn_assistant",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content: [
+        {
+          type: "tool",
+          id: "call-1",
+          name: "read",
+          state: { status: "completed", input: { path: "src/auth.ts" }, content: [{ type: "text", text: "ok" }] },
+          time: { created: 0 },
+        },
+      ],
+      time: { created: 0 },
+    })
+    const messages = [
+      {
+        id: SessionMessage.ID.create(),
+        type: "user" as const,
+        text: "Investigate auth",
+        time: { created: DateTime.makeUnsafe(0) },
+      },
+      assistant,
+    ]
+
+    expect(
+      yield* compaction.compactManual({
+        session,
+        resolveContext: () => Effect.succeed(loaded(session, messages)),
+        prepare: modelRequests.prepare,
+        messages,
+        inputID: SessionMessage.ID.make("msg_manual_compaction_turns"),
+      }),
+    ).toEqual({ status: "completed" })
+    expect(requests).toHaveLength(1)
+    const body = JSON.stringify(requests[0]?.messages)
+    expect(body).toContain("<turn-logs>")
+    expect(body).toContain("goal: Investigate auth")
+    expect(body).toContain("read(completed)")
+    expect(body).toContain("src/auth.ts")
+  }),
+)

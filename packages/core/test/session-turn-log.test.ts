@@ -89,3 +89,30 @@ describe("SessionTurnLog", () => {
     expect(SessionTurnLog.turnLogs([])).toEqual([])
   })
 })
+
+describe("SessionTurnLog.renderTurnLogs", () => {
+  test("renders nothing without assistant turns", () => {
+    expect(SessionTurnLog.renderTurnLogs([])).toBeUndefined()
+  })
+
+  test("renders one line per turn", () => {
+    const block = SessionTurnLog.renderTurnLogs([
+      user("investigate auth"),
+      assistant(tool("call-1", "read", "completed", { path: "src/auth.ts" })),
+    ])
+    expect(block).toContain("<turn-logs>")
+    expect(block).toContain("Turn 1 | goal: investigate auth | done: read(completed) | files: src/auth.ts")
+  })
+
+  test("caps the block to recent turns", () => {
+    const messages: SessionMessage.Info[] = []
+    for (let turn = 1; turn <= 3; turn += 1) {
+      messages.push(user(`goal ${turn}`))
+      messages.push(assistant(tool(`call-${turn}`, "read", "completed", { path: `f${turn}.ts` })))
+    }
+    const block = SessionTurnLog.renderTurnLogs(messages, 2)
+    expect(block).toContain("Turn 2")
+    expect(block).toContain("Turn 3")
+    expect(block).not.toContain("Turn 1 |")
+  })
+})

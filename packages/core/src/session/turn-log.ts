@@ -60,8 +60,7 @@ export function summarizeTurn(turn: number, userText: string, assistant: Session
 }
 
 /** Derives one record per assistant turn, in history order. */
-export function turnLogs(messages: ReadonlyArray<SessionMessage.Info>): TurnLog[] {
-  const logs: TurnLog[] = []
+export function turnLogs(messages: ReadonlyArray<SessionMessage.Info>): TurnLog[] {  const logs: TurnLog[] = []
   let pendingGoal = ""
   let turn = 0
   for (const message of messages) {
@@ -75,4 +74,26 @@ export function turnLogs(messages: ReadonlyArray<SessionMessage.Info>): TurnLog[
     pendingGoal = ""
   }
   return logs
+}
+
+/**
+ * Renders turn records for a compaction prompt. Returns undefined when there
+ * is nothing to list, so callers can omit the block. Capped to the most
+ * recent turns: the head being summarized is old by definition, and the block
+ * itself must stay small.
+ */
+export function renderTurnLogs(messages: ReadonlyArray<SessionMessage.Info>, maxTurns = 50): string | undefined {
+  const logs = turnLogs(messages).slice(-maxTurns)
+  if (logs.length === 0) return undefined
+  const lines = logs.map((log) => {
+    const done = log.done.map((item) => `${item.tool}(${item.status})`).join(", ") || "-"
+    const files = log.files.join(", ") || "-"
+    return `Turn ${log.turn} | goal: ${log.goal || "-"} | done: ${done} | files: ${files}`
+  })
+  return [
+    "The <turn-logs> block lists each summarized turn in order: its triggering goal, executed tools, and touched files.",
+    "<turn-logs>",
+    ...lines,
+    "</turn-logs>",
+  ].join("\n")
 }

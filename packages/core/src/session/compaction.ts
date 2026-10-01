@@ -20,6 +20,7 @@ import { llmClient } from "../effect/app-node-platform.js"
 import { SessionEvent } from "./event.js"
 import type { SessionContext } from "./context.js"
 import type { SessionMessage } from "./message.js"
+import { SessionTurnLog } from "./turn-log.js"
 import { SessionModelRequest } from "./model-request.js"
 import type { SessionRunnerModel } from "./runner/model.js"
 import { SessionRunnerRetry } from "./runner/retry.js"
@@ -401,6 +402,7 @@ export const layer = Layer.effect(
         initial: context.initial,
         messages: history.messages,
       })
+      const turnLogBlock = SessionTurnLog.renderTurnLogs(history.messages)
       const prepared = yield* input.prepare({
         kind: "compaction",
         scope: {
@@ -415,6 +417,7 @@ export const layer = Layer.effect(
           messages: [
             ...transcript.messages,
             ...(input.instructionUpdate ? [Message.system(input.instructionUpdate)] : []),
+            ...(turnLogBlock ? [Message.user(turnLogBlock)] : []),
             Message.user(
               buildPrompt(
                 history.messages.some((message) => message.type === "compaction" && message.status === "completed"),
