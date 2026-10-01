@@ -3,6 +3,7 @@ export * as SubagentTool from "./subagent.js"
 import { ToolFailure } from "@opencode-ai/ai"
 import type { Context } from "@opencode-ai/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
+import path from "path"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
 import { Permission } from "../../permission.js"
@@ -10,6 +11,8 @@ import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SessionTeam } from "../../session/team.js"
 import { SubagentJob } from "../../session/subagent-job.js"
+import { AbsolutePath } from "../../schema.js"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 
 export const name = "subagent"
 
@@ -80,6 +83,7 @@ export const Plugin = {
     const permission = yield* Permission.Service
     const team = yield* SessionTeam.Service
     const subagents = yield* SubagentJob.make
+    const fs = yield* FSUtil.Service
 
     yield* ctx.tool
       .transform((editor) =>
@@ -194,6 +198,25 @@ export const Plugin = {
                 .pipe(
                   Effect.mapError(
                     (error) => new ToolFailure({ message: `Failed to register team member: ${child.id}`, error }),
+                  ),
+                )
+              // Each team member works in its own workspace directory. The move
+              // needs an existing directory, so create it first. No copy and no
+              // git integration: the member scaffolds here, and path-ownership
+              // rules (not filesystem isolation) keep members from colliding.
+              const workspace = AbsolutePath.make(
+                path.join(parent.location.directory, "workspace", teamID, membership.name),
+              )
+              yield* fs.ensureDir(workspace).pipe(
+                Effect.mapError(
+                  (error) => new ToolFailure({ message: `Failed to create workspace: ${workspace}`, error }),
+                ),
+              )
+              yield* sessions
+                .move({ sessionID: child.id, directory: workspace })
+                .pipe(
+                  Effect.mapError(
+                    (error) => new ToolFailure({ message: `Failed to move team member to workspace: ${workspace}`, error }),
                   ),
                 )
               yield* sessions

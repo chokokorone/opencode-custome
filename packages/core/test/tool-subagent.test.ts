@@ -12,6 +12,7 @@ import { Global } from "@opencode-ai/util/global"
 import { makeGlobalNode, makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { Bus } from "@opencode-ai/core/bus"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Config } from "@opencode-ai/core/config"
 import { Location } from "@opencode-ai/core/location"
 import { Model } from "@opencode-ai/core/model"
@@ -108,7 +109,7 @@ const executionNode = makeGlobalNode({
 const subagentPluginSupervisor = makeLocationNode({
   name: "test/subagent-plugins",
   layer: Layer.effectDiscard(registerToolPlugin(SubagentTool.Plugin)),
-  deps: [Agent.node, Config.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
+  deps: [Agent.node, Bus.node, Config.node, FSUtil.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
 })
 
 const nodes = LayerNode.group([

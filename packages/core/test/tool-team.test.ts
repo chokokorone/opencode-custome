@@ -3,6 +3,7 @@ import { Effect, Fiber, Layer, Stream } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Bus } from "@opencode-ai/core/bus"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
 import { Job } from "@opencode-ai/core/job"
 import { Location } from "@opencode-ai/core/location"
@@ -54,7 +55,7 @@ const teamPluginSupervisor = makeLocationNode({
       yield* registerToolPlugin(TeamTool.Plugin)
     }),
   ),
-  deps: [Agent.node, Bus.node, Config.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
+  deps: [Agent.node, Bus.node, Config.node, FSUtil.node, Permission.node, Session.node, SessionTeam.node, Job.node, Tool.node],
 })
 
 const nodes = LayerNode.group([
@@ -326,6 +327,60 @@ describe("TeamTool rejection events", () => {
             to: "Boss",
           })
           expect(events[0]?.data.reason).toContain("Only the leader can message Boss")
+        }),
+      ),
+    ),
+  )
+})
+
+describe("TeamTool workspaces", () => {
+  it.live("moves team members into per-member workspace directories", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "boss" })
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          yield* Plugin.Service.use((plugins) => plugins.awaitActivation).pipe(Effect.provide(locations.get(location)))
+          yield* Agent.Service.use((agents) =>
+            agents.transform((editor) => {
+              editor.update(toolIdentity.agent, (agent) => {
+                agent.mode = "primary"
+                agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+              })
+              editor.update(Agent.ID.make("reviewer"), (agent) => {
+                agent.mode = "subagent"
+              })
+            }),
+          ).pipe(Effect.provide(locations.get(location)))
+
+          const spawned = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call" as const,
+              id: "call-spawn-ws",
+              name: "subagent",
+              input: { agent: "reviewer", description: "workspace check", team: "site" },
+            },
+          })
+          expect(spawned.status).toBe("completed")
+          const childID = spawned.metadata?.sessionID as Session.ID
+          expect(childID).toBeDefined()
+          // The move is async: it waits in the inbox until the dormant member
+          // first wakes. Assert the pending Move item and the directory itself.
+          const inbox = yield* sessions.inbox(childID)
+          const moves = inbox.filter((item) => item.type === "move")
+          expect(moves).toHaveLength(1)
+          const directory = (moves[0] as { payload: { location: { directory: string } } }).payload.location.directory
+          expect(directory.endsWith("/workspace/site/site-1")).toBe(true)
+          const stat = yield* Effect.promise(() => import("fs/promises").then((fs) => fs.stat(directory)))
+          expect(stat.isDirectory()).toBe(true)
         }),
       ),
     ),
