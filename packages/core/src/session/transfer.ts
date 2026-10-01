@@ -309,6 +309,9 @@ function sanitizeToolState(id: string, state: SessionMessage.ToolState): Session
   if (state.status === "streaming") return { ...state, input: redact("tool-input", id, state.input) }
   if (state.status === "running")
     return { ...state, input: { redacted: `tool-input:${id}` }, metadata: { redacted: `tool-metadata:${id}` } }
+  // Blocked keeps its permission descriptor: the approval UI needs the action
+  // and resources to render the request. Only the input is redacted.
+  if (state.status === "blocked") return { ...state, input: { redacted: `tool-input:${id}` } }
   const meta = state.metadata === undefined ? undefined : { redacted: `tool-metadata:${id}` }
   if (state.status === "completed")
     return {

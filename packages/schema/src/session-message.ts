@@ -151,10 +151,24 @@ export const ToolStateError = Schema.Struct({
   metadata: Schema.Record(Schema.String, Schema.Json).pipe(optional),
 }).annotate({ identifier: "Session.Message.ToolState.Error" })
 
-export const ToolState = Schema.Union([ToolStateStreaming, ToolStateRunning, ToolStateCompleted, ToolStateError]).pipe(
-  Schema.toTaggedUnion("status"),
-)
-export type ToolState = ToolStateStreaming | ToolStateRunning | ToolStateCompleted | ToolStateError
+export interface ToolStateBlocked extends Schema.Schema.Type<typeof ToolStateBlocked> {}
+export const ToolStateBlocked = Schema.Struct({
+  status: Schema.tag("blocked"),
+  input: Schema.Record(Schema.String, Schema.Unknown),
+  permission: Schema.Struct({
+    action: Schema.String,
+    resources: Schema.Array(Schema.String),
+  }),
+}).annotate({ identifier: "Session.Message.ToolState.Blocked" })
+
+export const ToolState = Schema.Union([
+  ToolStateStreaming,
+  ToolStateRunning,
+  ToolStateBlocked,
+  ToolStateCompleted,
+  ToolStateError,
+]).pipe(Schema.toTaggedUnion("status"))
+export type ToolState = ToolStateStreaming | ToolStateRunning | ToolStateBlocked | ToolStateCompleted | ToolStateError
 
 export interface AssistantTool extends Schema.Schema.Type<typeof AssistantTool> {}
 export const AssistantTool = Schema.Struct({

@@ -121,6 +121,12 @@ export type SessionMessageToolStateRunning = {
   metadata: { [x: string]: JsonValue }
 }
 
+export type SessionMessageToolStateBlocked = {
+  status: "blocked"
+  input: { [x: string]: JsonValue }
+  permission: { action: string; resources: Array<string> }
+}
+
 export type ToolTextContent = { type: "text"; text: string }
 
 export type ToolFileContent = { type: "file"; uri: string; mime: string; name?: string | null }
@@ -173,6 +179,12 @@ export type SessionMessageToolStateRunning1 = {
   status: "running"
   input: { [x: string]: any }
   metadata: { [x: string]: JsonValue }
+}
+
+export type SessionMessageToolStateBlocked1 = {
+  status: "blocked"
+  input: { [x: string]: any }
+  permission: { action: string; resources: Array<string> }
 }
 
 export type EventLogSynced = { type: "log.synced"; aggregateID: string; seq?: number }
@@ -791,6 +803,31 @@ export type SessionToolInputEnded = {
   durable: { aggregateID: string; seq: number; version: 1 }
   location?: LocationRef
   data: { sessionID: string; assistantMessageID: string; id: string; text: string }
+}
+
+export type SessionToolBlocked = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.tool.blocked"
+  durable: { aggregateID: string; seq: number; version: 1 }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    assistantMessageID: string
+    id: string
+    permission: { action: string; resources: Array<string> }
+  }
+}
+
+export type SessionToolResumed = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.tool.resumed"
+  durable: { aggregateID: string; seq: number; version: 1 }
+  location?: LocationRef
+  data: { sessionID: string; assistantMessageID: string; id: string }
 }
 
 export type SessionRetryScheduled = {
@@ -2023,6 +2060,9 @@ export type ConfigEntry =
             to: "boss" | "leader" | "member" | "peer"
             effect: "allow" | "deny"
           }>
+          leader?: string
+          members?: Array<string>
+          reports_to?: "boss"
         }>
         providers?: {
           [x: string]: {
@@ -2107,6 +2147,7 @@ export type SessionMessageAssistantTool = {
   state:
     | SessionMessageToolStateStreaming
     | SessionMessageToolStateRunning
+    | SessionMessageToolStateBlocked
     | SessionMessageToolStateCompleted
     | SessionMessageToolStateError
   time: { created: number; ran?: number; completed?: number }
@@ -2122,6 +2163,7 @@ export type SessionMessageAssistantTool1 = {
   state:
     | SessionMessageToolStateStreaming
     | SessionMessageToolStateRunning1
+    | SessionMessageToolStateBlocked1
     | SessionMessageToolStateCompleted1
     | SessionMessageToolStateError1
   time: { created: number; ran?: number; completed?: number }
@@ -2251,6 +2293,8 @@ export type SessionEventDurable =
   | SessionToolInputStarted
   | SessionToolInputEnded
   | SessionToolCalled
+  | SessionToolBlocked
+  | SessionToolResumed
   | SessionToolSuccess
   | SessionToolFailed
   | SessionRetryScheduled
@@ -2316,6 +2360,8 @@ export type V2Event =
   | SessionToolInputDelta
   | SessionToolInputEnded
   | SessionToolCalled
+  | SessionToolBlocked
+  | SessionToolResumed
   | SessionToolProgress
   | SessionToolSuccess
   | SessionToolFailed
@@ -3016,6 +3062,11 @@ export type SessionImportInput = {
                       readonly metadata: { readonly [x: string]: JsonValue }
                     }
                   | {
+                      readonly status: "blocked"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly permission: { readonly action: string; readonly resources: ReadonlyArray<string> }
+                    }
+                  | {
                       readonly status: "completed"
                       readonly input: { readonly [x: string]: JsonValue }
                       readonly content: readonly [
@@ -3295,6 +3346,11 @@ export type SessionImportInput = {
                       readonly metadata: { readonly [x: string]: JsonValue }
                     }
                   | {
+                      readonly status: "blocked"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly permission: { readonly action: string; readonly resources: ReadonlyArray<string> }
+                    }
+                  | {
                       readonly status: "completed"
                       readonly input: { readonly [x: string]: JsonValue }
                       readonly content: readonly [
@@ -3572,6 +3628,11 @@ export type SessionImportInput = {
                       readonly status: "running"
                       readonly input: { readonly [x: string]: JsonValue }
                       readonly metadata: { readonly [x: string]: JsonValue }
+                    }
+                  | {
+                      readonly status: "blocked"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly permission: { readonly action: string; readonly resources: ReadonlyArray<string> }
                     }
                   | {
                       readonly status: "completed"
@@ -4269,6 +4330,11 @@ export type SessionMessageUpdateInput = {
                 readonly status: "running"
                 readonly input: { readonly [x: string]: JsonValue }
                 readonly metadata: { readonly [x: string]: JsonValue }
+              }
+            | {
+                readonly status: "blocked"
+                readonly input: { readonly [x: string]: JsonValue }
+                readonly permission: { readonly action: string; readonly resources: ReadonlyArray<string> }
               }
             | {
                 readonly status: "completed"

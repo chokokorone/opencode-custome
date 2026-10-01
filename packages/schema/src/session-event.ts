@@ -524,6 +524,38 @@ export namespace Tool {
   })
   export type Called = typeof Called.Type
 
+  /**
+   * The tool fiber parked awaiting approval. Published by Permission.assert
+   * before it waits, only for tool-sourced requests. Projection pins the
+   * running item to blocked, preserving its input.
+   */
+  export const Blocked = Event.durable({
+    type: "session.tool.blocked",
+    ...options,
+    schema: {
+      ...ToolBase,
+      permission: Schema.Struct({
+        action: Schema.String,
+        resources: Schema.Array(Schema.String),
+      }),
+    },
+  })
+  export type Blocked = typeof Blocked.Type
+
+  /**
+   * The parked tool fiber was approved and continues. Published by
+   * Permission.reply before it releases the waiter, only for tool-sourced
+   * requests. Projection returns the blocked item to running.
+   */
+  export const Resumed = Event.durable({
+    type: "session.tool.resumed",
+    ...options,
+    schema: {
+      ...ToolBase,
+    },
+  })
+  export type Resumed = typeof Resumed.Type
+
   /** Live replacement metadata for a running tool. */
   export const Progress = Event.ephemeral({
     type: "session.tool.progress",
@@ -689,6 +721,8 @@ export const Definitions = Event.inventory(
   Tool.Input.Delta,
   Tool.Input.Ended,
   Tool.Called,
+  Tool.Blocked,
+  Tool.Resumed,
   Tool.Progress,
   Tool.Success,
   Tool.Failed,

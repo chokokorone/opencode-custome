@@ -14294,6 +14294,19 @@
                     "required": ["from", "to", "effect"],
                     "additionalProperties": false
                   }
+                },
+                "leader": {
+                  "type": "string"
+                },
+                "members": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "reports_to": {
+                  "type": "string",
+                  "enum": ["boss"]
                 }
               },
               "required": ["teamID", "rules"],
@@ -18303,6 +18316,9 @@
                 "$ref": "#/components/schemas/Session.Message.ToolState.Running"
               },
               {
+                "$ref": "#/components/schemas/Session.Message.ToolState.Blocked"
+              },
+              {
                 "$ref": "#/components/schemas/Session.Message.ToolState.Completed"
               },
               {
@@ -18788,6 +18804,36 @@
           }
         },
         "required": ["id", "time", "type", "text"],
+        "additionalProperties": false
+      },
+      "Session.Message.ToolState.Blocked": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["blocked"]
+          },
+          "input": {
+            "type": "object"
+          },
+          "permission": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "resources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["action", "resources"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["status", "input", "permission"],
         "additionalProperties": false
       },
       "Session.Message.ToolState.Completed": {

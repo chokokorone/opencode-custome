@@ -319,6 +319,34 @@ export function update(adapter: Adapter, event: SessionEvent.DurableEvent) {
       },
       // Terminal tool events are self-contained; projection is a direct copy and
       // never reaches into ephemeral progress history.
+      "session.tool.blocked": (event) => {
+        return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestTool(draft, event.data.id)
+          if (match && match.state.status === "running") {
+            match.state = castDraft(
+              SessionMessage.ToolStateBlocked.make({
+                status: "blocked",
+                input: match.state.input,
+                permission: event.data.permission,
+              }),
+            )
+          }
+        })
+      },
+      "session.tool.resumed": (event) => {
+        return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestTool(draft, event.data.id)
+          if (match && match.state.status === "blocked") {
+            match.state = castDraft(
+              SessionMessage.ToolStateRunning.make({
+                status: "running",
+                input: match.state.input,
+                metadata: {},
+              }),
+            )
+          }
+        })
+      },
       "session.tool.success": (event) => {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
           const match = latestTool(draft, event.data.id)

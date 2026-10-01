@@ -7,6 +7,8 @@ import { Bus } from "./bus.js"
 import { Location } from "./location.js"
 import { Agent } from "./agent.js"
 import { SessionErrors } from "./session/error.js"
+import { SessionEvent } from "./session/event.js"
+import { SessionMessage } from "./session/message.js"
 import { SessionSchema } from "./session/schema.js"
 import { SessionStore } from "./session/store.js"
 import { Wildcard } from "./util/wildcard.js"
@@ -233,6 +235,17 @@ const layer = Layer.effect(
             }
             if (result.effect === "allow") return
             const item = yield* create(request(input, result.message), input.agent)
+            // Park observability: a tool fiber awaiting approval visibly enters
+            // blocked before it waits. Question and form asks never park a tool,
+            // so only tool-sourced requests publish.
+            if (input.source?.type === "tool") {
+              yield* bus.publish(SessionEvent.Tool.Blocked, {
+                sessionID: input.sessionID,
+                assistantMessageID: SessionMessage.ID.make(input.source.messageID),
+                id: input.source.id,
+                permission: { action: input.action, resources: [...input.resources] },
+              })
+            }
             return yield* restore(Deferred.await(item.deferred)).pipe(
               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
               // must not convert a user's decline into model-facing tool output. The decline
@@ -288,6 +301,16 @@ const layer = Layer.effect(
               resources: existing.request.save,
             })
           }
+          // Resume observability: the parked tool fiber visibly returns to
+          // running before it continues. Rejections never resume; the waiter
+          // dies and the tool settles through the decline tunnel instead.
+          if (existing.request.source?.type === "tool") {
+            yield* bus.publish(SessionEvent.Tool.Resumed, {
+              sessionID: existing.request.sessionID,
+              assistantMessageID: SessionMessage.ID.make(existing.request.source.messageID),
+              id: existing.request.source.id,
+            })
+          }
           yield* Deferred.succeed(existing.deferred, undefined)
           pending.delete(input.requestID)
           if (input.reply !== "always" || !existing.request.save?.length) return
@@ -302,6 +325,13 @@ const layer = Layer.effect(
               requestID: item.request.id,
               reply: "always",
             })
+            if (item.request.source?.type === "tool") {
+              yield* bus.publish(SessionEvent.Tool.Resumed, {
+                sessionID: item.request.sessionID,
+                assistantMessageID: SessionMessage.ID.make(item.request.source.messageID),
+                id: item.request.source.id,
+              })
+            }
             yield* Deferred.succeed(item.deferred, undefined)
             pending.delete(id)
           }
